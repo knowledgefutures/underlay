@@ -197,7 +197,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Files API',
         label: 'Files',
         href: '/docs/api/files',
-        blurb: 'Upload, verify and download content-addressed files',
+        blurb: 'Upload, verify, and download content-addressed files',
         headings: [
           'HEAD /api/collections/:owner/:slug/files/:hash',
           'GET /api/collections/:owner/:slug/files/:hash',

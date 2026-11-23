@@ -13,15 +13,15 @@ Built by [Knowledge Futures](https://www.knowledgefutures.org), a 501(c)(3) publ
 ## Repository layout
 
 One codebase that runs on Cloudflare Workers (D1, R2, Queues) and, for development and tests, on
-Node (SQLite, S3 or the filesystem). It is a pnpm workspace:
+Node (SQLite, S3, or the filesystem). It is a pnpm workspace:
 
-| Package                                    | What it is                                                                                                                                                                                                                    |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/protocol` (`@underlay/protocol`) | The format: canonical JSON, hashing, validation, trees, version roots, the repository layout, the signed version log, tree sync and `fsck`. Stores for memory, the filesystem, S3 and R2. Runs in Node, Workers and browsers. |
-| `packages/server` (`@underlay/server`)     | The Hono app: API, push and commit, files, jobs, billing counters, storage locations. Worker entry `src/worker.ts`, Node entry `src/node/main.ts`. Migrations in `drizzle/`.                                                  |
-| `packages/web` (`@underlay/web`)           | The UI: React Router pages rendered on the server by both entries, plus the client bundle.                                                                                                                                    |
-| `packages/cli` (`@underlay/cli`)           | The command line: a local repository, pull by tree sync, push by delta push. Unpublished, and its `clone`, `pull` and `push` don't work against production (see its README).                                                  |
-| `packages/migrate` (`@underlay/migrate`)   | Converts a v1 (Postgres) instance into v2.                                                                                                                                                                                    |
+| Package                                    | What it is                                                                                                                                                                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/protocol` (`@underlay/protocol`) | The format: canonical JSON, hashing, validation, trees, version roots, the repository layout, the signed version log, tree sync, and `fsck`. Stores for memory, the filesystem, S3, and R2. Runs in Node, Workers, and browsers. |
+| `packages/server` (`@underlay/server`)     | The Hono app: API, push and commit, files, jobs, billing counters, storage locations. Worker entry `src/worker.ts`, Node entry `src/node/main.ts`. Migrations in `drizzle/`.                                                     |
+| `packages/web` (`@underlay/web`)           | The UI: React Router pages rendered on the server by both entries, plus the client bundle.                                                                                                                                       |
+| `packages/cli` (`@underlay/cli`)           | The command line: a local repository, pull by tree sync, push by delta push. Unpublished, and its `clone`, `pull`, and `push` don't work against production (see its README).                                                    |
+| `packages/migrate` (`@underlay/migrate`)   | Converts a v1 (Postgres) instance into v2.                                                                                                                                                                                       |
 
 `docs/protocol-v2.md` is the specification of Underlay protocol v2, with test vectors in
 `packages/protocol/test/vectors/`. `docs/protocol-v3.md` is the draft of protocol v3 (a log of
@@ -60,7 +60,7 @@ Other checks CI runs: `pnpm --filter @underlay/protocol check-browser` (the brow
 ## Deployment
 
 Each deployment is a wrangler env in `packages/server/wrangler.jsonc` with its own Worker, D1
-database, bucket and queues: `staging` (staging.underlay.org) and `prod` (www.underlay.org):
+database, bucket, and queues: `staging` (staging.underlay.org) and `prod` (www.underlay.org):
 
 ```bash
 pnpm --filter @underlay/web build

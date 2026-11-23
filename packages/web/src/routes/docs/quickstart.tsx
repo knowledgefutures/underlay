@@ -301,7 +301,7 @@ export default function DocsQuickstart() {
           privacy, errors
         </li>
         <li>
-          <Link to="/docs/protocol">Protocol</Link>: how records, versions and pushes work
+          <Link to="/docs/protocol">Protocol</Link>: how records, versions, and pushes work
         </li>
       </ul>
     </DocsLayout>

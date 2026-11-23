@@ -18,13 +18,13 @@ Command-line client (the Underlay CLI): https://www.underlay.org/docs/cli
    Every key starts with "ul_" and belongs to the user who creates it. Create keys at
    https://www.underlay.org/settings/keys, at https://www.underlay.org/:owner/settings/keys (which can
    confine a key to one of the organization's collections), or with the API (see "API Keys").
-   A key has a scope, read, write or admin, and may be confined to some collections.
+   A key has a scope, read, write, or admin, and may be confined to some collections.
 
 2. Session cookie (browser use):
    Sign in through KF Auth SSO at https://www.underlay.org/login. An account is created on
    first sign-in.
 
-Public collections need no authentication. Publishing, settings and private collections need a
+Public collections need no authentication. Publishing, settings, and private collections need a
 key or a session. A Bearer key that doesn't verify is refused with 401 {"error": "Invalid or
 expired API key"}; it is never treated as anonymous.
 
@@ -32,12 +32,12 @@ What a key may do:
 - read: read what its holder may read.
 - write: also publish (push, files, metadata, fork). Acts as a plain member of the org.
 - admin: keeps its holder's full role (owners and admins may then change visibility, delete,
-  transfer, and manage webhooks, mirrors and ARK settings). A member's admin key is still a member's.
-  Changing or deleting an organization, setting its NAAN and deleting your account also need a
+  transfer, and manage webhooks, mirrors, and ARK settings). A member's admin key is still a member's.
+  Changing or deleting an organization, setting its NAAN, and deleting your account also need a
   session or an admin key: an owner's write key gets 403.
 - A key confined to collections (metadata.collectionIds) works only on those collections, and is
   refused on account and organization endpoints and on fork. On its collections it acts as a
-  member whatever its scope: it may push, but visibility, deletion, transfer, webhooks and
+  member whatever its scope: it may push, but visibility, deletion, transfer, webhooks, and
   mirrors are 403.
 
 Agent links: a collection's Share panel can create https://www.underlay.org/agent/ul_<key>, a
@@ -74,7 +74,7 @@ per data center and is approximate.
   :owner/:slug, or by its id as _/:collectionId (see "Collection URLs"). A collection is public
   or private as a whole: anyone may read every version of a public collection, and only members
   of the owning organization may read a private one.
-- Version: an immutable state of a collection: schemas, records, files and metadata. Identified
+- Version: an immutable state of a collection: schemas, records, files, and metadata. Identified
   by semver ("v1.2.0"), by version id ("ul:ver:<64 hex>"), or as "latest". A collection is a log
   of commits, and a version is the log up to one commit; its id is "ul:ver:" + the SHA-256 of
   that commit. Anywhere the API takes a version it also takes the bare 64 hex, the same hash
@@ -86,7 +86,7 @@ per data center and is approximate.
 - Type: a class of records with one JSON Schema (draft-07).
 - File (asset): bytes identified by their SHA-256, "ul:asset:<hex>"; attached to a record with
   {"$file": "sha256:<hex>"}, or pointed at from anywhere with {"$link": "ul:asset:<hex>"}.
-- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset) or a version
+- Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset), or a version
   (ver) by its hash. See "Links between records".
 - Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
   cross-collection discovery.
@@ -147,7 +147,7 @@ GET /api/collections                       → public collections
     collection in the list: [{slug, name, avatarUrl, coverColor, count}]
 GET /api/collections/:owner/:slug          → {id, owner: {id, did, handle, name}, slug, name,
     description, visibility: public|private, ark, createdAt, updatedAt, versionCount,
-    head: {semver, hash} | null}, plus public, ownerSlug, ownerName and latestVersion (a summary)
+    head: {semver, hash} | null}, plus public, ownerSlug, ownerName, and latestVersion (a summary)
 GET /api/accounts/:owner/collections       → an organization's collections (members also see
     private ones): [{id, slug, name, public, createdAt, updatedAt, description, tags, license,
     latestVersion, recordCount, totalBytes, typeCounts, lastPushAt, pinned (its place among the
@@ -161,7 +161,7 @@ GET /api/collections/:owner/:slug/versions/:n       → one version
     (:n = v1.2.0, 1.2.0, ul:ver:<hex>, its bare hex, or an old ulv3:<hex> or ulv2:<hex> id)
     → {semver, major, minor, patch, hash, baseSemver, message, appId, recordCount, fileCount,
        totalBytes, typeCounts, createdAt, ark, metadata, schemas: {type: schema}}
-    hash is the version id (ul:ver:...). Members also get pushedBy, pushedByName and actorId.
+    hash is the version id (ul:ver:...). Members also get pushedBy, pushedByName, and actorId.
 
 ### Records
 GET .../versions/:n/records                → a page of records
@@ -193,7 +193,7 @@ Records come in (type, id) order. Cursors are opaque: pass back nextCursor uncha
 is false. Manifest entries are about 120 bytes each: the cheapest way to learn what a version holds.
 
 ### Diff
-GET .../versions/:n/diff?from=v1.0.0       → records added, updated and removed, with bodies
+GET .../versions/:n/diff?from=v1.0.0       → records added, updated, and removed, with bodies
     ?limit= (default 500, max 5000), cursor=
     → {from, to, added: [{id, type, data}], updated: [{id, type, data}], removed: [{id, type}],
        pagination: {limit, hasMore, nextCursor},
@@ -301,7 +301,7 @@ Authorization: Bearer ul_<key>
 
 Every field is optional:
 - base: the semver you diffed against. If it isn't the head: 409 with currentVersion. null,
-  "latest" or absent applies your changes to whatever the head is; use null for the first push.
+  "latest", or absent applies your changes to whatever the head is; use null for the first push.
 - schemas: the FULL type set, type → JSON Schema. It replaces the base's: a type you leave out
   is removed with its records. Omit it to keep the base's types. Every schema of the resulting
   set (kept ones too) is checked in full here: draft-07 meta-schema, patterns, $refs that
@@ -492,7 +492,7 @@ v1.0.0.
 ### Semver
 The server assigns it from what changed against the base:
 - major: a type added or removed, or a schema changed
-- minor: otherwise, any record added, removed or changed
+- minor: otherwise, any record added, removed, or changed
 - patch: otherwise (metadata or files only)
 A push that changes nothing makes no version (409 "No changes detected").
 
@@ -564,7 +564,7 @@ multi-member support).
 - Whole version, one pass               → records.ndjson
 - A page, or browsing                   → records?limit=2000&cursor=
 - One record                            → records/:type/:id
-- Only ids, types and hashes            → manifest
+- Only ids, types, and hashes           → manifest
 - What changed since a version          → manifest?since=
 - An archive to keep                    → export
 
@@ -595,7 +595,7 @@ These answer on www.underlay.org, but do not work yet:
 - id: a stable string, unique per type within the collection. Use your app's primary key.
 - type: groups records by kind ("Article", "Author", "Grant"); each type has one schema.
 - data: any JSON value its schema allows. Refer to other records by id; refer to files with
-  {"$file": "sha256:<hex>"}; point at an exact record, asset or version anywhere on Underlay with
+  {"$file": "sha256:<hex>"}; point at an exact record, asset, or version anywhere on Underlay with
   a link (next section).
 
 Keep relationships within a collection as ids (no joins); readers resolve them with the schema
@@ -626,7 +626,7 @@ points at:
   field they are in, so name the field for what it means (derivedFrom, cites, sameAs).
 - A link can sit at any depth (in arrays, nested objects). A link object isn't searched inside.
 - A record's hash is in every read response ("hash"), and the record page has "Copy as $link".
-- The server refuses (422) a record whose $link is not a ul: id: bare hex, "sha256:..." and
+- The server refuses (422) a record whose $link is not a ul: id: bare hex, "sha256:...", and
   "ulv3:..." are refused with a message saying what to write. It never checks that the target
   exists or that you can read it: the target may be private or on another server.
 - {"$file": "sha256:<hex>"} and {"$link": "ul:asset:<hex>"} name the same file, but only $file
@@ -701,7 +701,7 @@ Every record line is checked on its source text. Refused (422, with a code):
 - too_deep: data nested more than 64 levels
 - bad_envelope: not an object, no data, or a "private" that isn't a boolean
 - bad_id: id missing, not a string, empty, or over 1,024 UTF-8 bytes
-- bad_type: type missing, empty, over 128 UTF-8 bytes, starting with ".", or containing /, \ or
+- bad_type: type missing, empty, over 128 UTF-8 bytes, starting with ".", or containing /, \, or
   control characters
 - record_too_large: canonical form over 8 MiB
 Strings are not Unicode-normalized. Full rules: https://www.underlay.org/docs/protocol/records
@@ -710,7 +710,7 @@ Strings are not Unicode-normalized. Full rules: https://www.underlay.org/docs/pr
 A schema is JSON Schema draft-07 ($schema, if given, must name draft-07), at most 256 KiB
 canonical, with each pattern at most 256 characters. Its hash is SHA-256 of JCS(schema).
 A type name (a key of "schemas") must also not begin with "$" or with a character that sorts
-before it (space, !, " or #), and must not be "__proto__"; otherwise 422 at open.
+before it (space, !, ", or #), and must not be "__proto__"; otherwise 422 at open.
 "private" on a property is refused. "private": true at a schema's root is refused in a public
 collection (see "Privacy & Visibility").
 
@@ -736,8 +736,8 @@ with ?raw=true).
 
 ## Privacy & Visibility
 
-Privacy is set per collection, never per record, type or field:
-- A public collection: anyone may read every version of it, records, schemas and files.
+Privacy is set per collection, never per record, type, or field:
+- A public collection: anyone may read every version of it, records, schemas, and files.
 - A private collection: a 404 to everyone but members of the owning organization, who read all
   of it.
 
@@ -800,7 +800,7 @@ Webhooks (owners and admins), under /api/collections/:owner/:slug/webhooks:
 GET, POST {url, bumpFilter?: ["major","minor","patch"], enabled?} (the secret is returned once),
 PATCH/DELETE /:id, POST /:id/test, GET /:id/deliveries, POST /:id/deliveries/:did/retry.
 A delivery is sent for each new version (pushes and metadata edits) whose bump is in bumpFilter.
-Each delivery is a POST with headers x-underlay-event, x-underlay-delivery and
+Each delivery is a POST with headers x-underlay-event, x-underlay-delivery, and
 x-underlay-signature: sha256=<HMAC-SHA256(secret, body)>, and the body
 {event: "version.created", collection: {owner, slug}, version: {semver, hash, major, minor,
 patch, recordCount, fileCount}, bumpType}. version.hash is the ul:ver: id.
@@ -816,7 +816,7 @@ GET    /api/collections/:owner/:slug/placements          → the primary and eac
 POST   /api/collections/:owner/:slug/placements          → {"locationId", "sets"} → 201
 POST   /api/collections/:owner/:slug/placements/:id/sync → catch up again → 202
 DELETE /api/collections/:owner/:slug/placements/:id      → stop (what was copied stays)
-A mirror holds the collection's signed commits, current layout, record files and files, at the
+A mirror holds the collection's signed commits, current layout, record files, and files, at the
 keys the protocol uses, so the bucket reads with no Underlay server. sets is "public" (the
 default: public collections only; a private collection is 422, or "error" once made private)
 or "public+private" (needs a bucket that doesn't serve objects without credentials). New versions
@@ -835,7 +835,7 @@ POST /api/auth/api-key/create  → {"name": "my-app", "metadata": {"scope": "wri
 GET  /api/auth/api-key/list    → {apiKeys: [{id, name, start, permissions, metadata, createdAt, expiresAt}], total}
 POST /api/auth/api-key/delete  → revoke {"keyId": "..."} → {"success": true}
 These routes need a signed-in session (a key can't manage keys), and create keys owned by you.
-scope is read (the default), write or admin; see
+scope is read (the default), write, or admin; see
 "Authentication" for what each allows.
 
 ---
@@ -849,7 +849,7 @@ Errors are JSON: {"error": "<message>", "statusCode": <status>, ...}.
 403: the key's scope or role doesn't allow it, or another user's push session
 404: not found, or not readable by you (a private collection is never a 403)
 409: version conflict, no changes, or a session that isn't open
-413: a body, batch or file over the server's limits
+413: a body, batch, or file over the server's limits
 422: records failing the input rules or schema, a refused schema, a private mark in a public
      collection, or missing files at commit
 429: rate limited, or too many push sessions open (Retry-After)

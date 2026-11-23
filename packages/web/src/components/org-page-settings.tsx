@@ -172,7 +172,7 @@ export default function OrgPageSettings({
       <fieldset>
         <legend className="mb-1 text-sm font-medium">Cover image</legend>
         <p className="text-ink-muted mb-3 text-xs">
-          Optional. A wide photo or graphic, at least 1600 pixels across. JPEG, PNG, GIF or WebP.
+          Optional. A wide photo or graphic, at least 1600 pixels across. JPEG, PNG, GIF, or WebP.
           Large images are scaled down; GIFs must be 3 MiB or smaller.
         </p>
         <div className="flex flex-wrap items-center gap-2">

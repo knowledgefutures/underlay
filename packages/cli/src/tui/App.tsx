@@ -1805,7 +1805,7 @@ export function App({
           value: '',
           submit: async (v) => {
             const level = levels[v.trim().toLowerCase()]
-            if (!level) return setStatus('Kept as it was: type e, d or m')
+            if (!level) return setStatus('Kept as it was: type e, d, or m')
             if (level === now) return setStatus(`Already keeping ${KEEP_LABEL[level]}`)
             const go = () =>
               void attempt(`Keeping ${KEEP_LABEL[level]}`, async () => {

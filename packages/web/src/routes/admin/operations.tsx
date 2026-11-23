@@ -54,7 +54,7 @@ export default function AdminOperations() {
   return (
     <AdminLayout
       title="Operations"
-      description="Pushes, storage locations and background work, and the tools that rebuild counters."
+      description="Pushes, storage locations, background work, and the tools that rebuild counters."
     >
       <SectionHeading>Pushes</SectionHeading>
       <p className="text-ink-muted mb-2 text-xs">
@@ -162,7 +162,7 @@ export default function AdminOperations() {
       <SectionHeading>Tools</SectionHeading>
       <CollectionTool
         title="Reconcile a collection"
-        hint="Rebuilds its billing counters, schema usage and public files tree from its versions, and reports what it corrected."
+        hint="Rebuilds its billing counters, schema usage, and public files tree from its versions, and reports what it corrected."
         endpoint="/api/admin/reconcile"
       />
       <CollectionTool

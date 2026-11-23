@@ -253,7 +253,7 @@ export default function OwnerSettings() {
               )}
             </div>
             <p className="text-ink-muted mt-1 text-xs">
-              JPEG, PNG, GIF or WebP. Large images are scaled down; GIFs must be 1 MiB or smaller.
+              JPEG, PNG, GIF, or WebP. Large images are scaled down; GIFs must be 1 MiB or smaller.
             </p>
           </div>
         </div>

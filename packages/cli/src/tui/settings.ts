@@ -23,7 +23,7 @@ const GROUP_HELP: Record<string, string> = {
   Store:
     'Where record files, versions not yet pushed, and run logs are kept, and how much fetched data may be.',
   Rules:
-    'Rules send a collection’s records somewhere other than the store, or set how much of it is kept, by authority, org or collection. The most specific match wins.',
+    'Rules send a collection’s records somewhere other than the store, or set how much of it is kept, by authority, org, or collection. The most specific match wins.',
   Remotes:
     'The places collections come from and are pushed to. underlay login <remote> signs in to one with a key from its settings page.',
   'Script folders':
@@ -130,7 +130,7 @@ export function settingsAbout(
         : r.kind === 'source'
           ? 'd takes it out of config.toml; its files stay.'
           : r.kind === 'rule'
-            ? 'enter edits it: path <folder>, keep all, some or none. d removes it.'
+            ? 'enter edits it: path <folder>, keep all, some, or none. d removes it.'
             : r.choices
               ? `enter steps through: ${r.choices.join(', ')}.${r.from === 'set' ? ' d goes back to the default.' : ''}`
               : `enter edits it.${r.from === 'set' ? ' d goes back to the default.' : ''}`

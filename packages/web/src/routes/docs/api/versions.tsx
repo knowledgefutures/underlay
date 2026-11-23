@@ -238,7 +238,7 @@ export default function DocsApiVersions() {
     <DocsLayout title="Versions API">
       <p>
         Versions are the core of Underlay. Each version is an immutable snapshot of a collection:
-        schemas, records and file references. You publish one with a <strong>delta push</strong>:
+        schemas, records, and file references. You publish one with a <strong>delta push</strong>:
         open a session against the version you started from, upload the records you add or change
         and the ids you delete, and commit.
       </p>
@@ -250,7 +250,7 @@ export default function DocsApiVersions() {
         November 13, 2026, also answer to the <code>ulv2:</code> ids they had then; responses always
         give the <code>ul:ver:</code> id. Wherever a version is named in a path (<code>:n</code>),
         it can be a semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record,
-        schema and file hashes are bare hex in responses; to cite or link to a record write{' '}
+        schema, and file hashes are bare hex in responses; to cite or link to a record write{' '}
         <code>ul:rec:&lt;hash&gt;</code>, and to a file <code>ul:asset:&lt;hash&gt;</code>.
       </p>
       <p>
@@ -303,8 +303,8 @@ export default function DocsApiVersions() {
                 <code>$ref</code>s that resolve, and the{' '}
                 <a href="/docs/protocol/records#schemas">schema rules</a>); one that fails is{' '}
                 <code>422</code>. So is a type name that begins with <code>$</code>, a space,{' '}
-                <code>!</code>, <code>"</code> or <code>#</code>, or is <code>__proto__</code>, and,
-                in a public collection, a schema marked <code>"private": true</code> (see{' '}
+                <code>!</code>, <code>"</code>, or <code>#</code>, or is <code>__proto__</code>,
+                and, in a public collection, a schema marked <code>"private": true</code> (see{' '}
                 <a href="#privacy">Privacy</a>).
               </td>
             </tr>
@@ -445,13 +445,13 @@ export default function DocsApiVersions() {
         </pre>
         <p>
           <code>recordCount</code> and <code>fileCount</code> count the whole version, not only what
-          this push changed; <code>changes</code> counts the records this push added, removed and
+          this push changed; <code>changes</code> counts the records this push added, removed, and
           updated.
         </p>
         <p>
           The semver follows from what changed against the base: <strong>major</strong> when a type
           was added or removed or a schema changed, otherwise <strong>minor</strong> when any record
-          was added, removed or changed, otherwise <strong>patch</strong> (metadata or files only).
+          was added, removed, or changed, otherwise <strong>patch</strong> (metadata or files only).
           A push that changes nothing makes no version and answers <code>409</code>.
         </p>
         <p>
@@ -463,7 +463,7 @@ export default function DocsApiVersions() {
           <code>"Session is &lt;status&gt;"</code>).
         </p>
         <p>
-          With <code>?async=true</code>, <code>?async=1</code> or a body of{' '}
+          With <code>?async=true</code>, <code>?async=1</code>, or a body of{' '}
           <code>{'{"async": true}'}</code>, the answer is <code>202</code> and the version is built
           in the background. The commit runs this way without being asked when the session uploaded
           more than 100,000 records, or when a schema change means more than 100,000 of the
@@ -480,9 +480,9 @@ export default function DocsApiVersions() {
             <code>GET .../push/:sid</code>
           </a>{' '}
           until <code>status</code> is <code>committed</code> (<code>result</code> is the{' '}
-          <code>201</code> body) or <code>failed</code> (<code>error</code> is the rejection), or
-          back to <code>open</code> with <code>error</code> after a <code>"Missing files"</code>{' '}
-          refusal. The version isn&rsquo;t visible to readers until it is committed.
+          <code>201</code> body), <code>failed</code> (<code>error</code> is the rejection), or back
+          to <code>open</code> with <code>error</code> after a <code>"Missing files"</code> refusal.
+          The version isn&rsquo;t visible to readers until it is committed.
         </p>
         <p>A commit can be refused:</p>
         <ul>
@@ -753,10 +753,10 @@ export default function DocsApiVersions() {
           <code>{listRes}</code>
         </pre>
         <p>
-          <code>recordCount</code>, <code>fileCount</code>, <code>totalBytes</code> and{' '}
+          <code>recordCount</code>, <code>fileCount</code>, <code>totalBytes</code>, and{' '}
           <code>typeCounts</code> count the whole version. <code>baseSemver</code> is the version
           before it (<code>null</code> for the first). <code>pushedBy</code>,{' '}
-          <code>pushedByName</code> and <code>actorId</code> are for the collection&rsquo;s members
+          <code>pushedByName</code>, and <code>actorId</code> are for the collection&rsquo;s members
           only. <code>ark</code> is null when the collection&rsquo;s ARK is off.
         </p>
       </div>
@@ -908,7 +908,7 @@ export default function DocsApiVersions() {
         <p className="scope">No auth for public collections</p>
         <p>
           A record&rsquo;s history: each version where it was <code>added</code>,{' '}
-          <code>updated</code> or <code>removed</code>, oldest first. <code>hash</code> is the
+          <code>updated</code>, or <code>removed</code>, oldest first. <code>hash</code> is the
           record&rsquo;s hash in that version, <code>null</code> when removed. It covers every
           version of the collection, so <code>truncated</code> is always false. A record never seen
           is <code>404</code>. It costs 5 rate units.
@@ -1023,7 +1023,7 @@ export default function DocsApiVersions() {
         </h2>
         <p className="scope">No auth for public collections</p>
         <p>
-          Get the manifest: every record&rsquo;s id, type and content hash, without the bodies, in
+          Get the manifest: every record&rsquo;s id, type, and content hash, without the bodies, in
           (type, id) order. This is the cheapest way to learn what a version contains (at roughly
           120 bytes per entry, a million records is an order of magnitude smaller than fetching
           them), and what a client that keeps no copy diffs against before it pushes.
@@ -1057,7 +1057,7 @@ export default function DocsApiVersions() {
               <td>
                 A semver or version id, at or before <code>:n</code> (a later one is{' '}
                 <code>400</code>). Return a delta against that version instead of the full manifest:
-                which records were added, updated and removed between the two.
+                which records were added, updated, and removed between the two.
               </td>
             </tr>
           </tbody>
@@ -1096,7 +1096,7 @@ export default function DocsApiVersions() {
           Diff two versions, with full record bodies. Without <code>from</code>, the diff is against
           the version before <code>:n</code>, which the response&rsquo;s <code>from</code> names.
           The first version has none before it, so its diff is against an empty version: every
-          record is <code>added</code>, <code>from</code> is <code>null</code> and{' '}
+          record is <code>added</code>, <code>from</code> is <code>null</code>, and{' '}
           <code>schemaChanged</code> is true. It costs 5 rate units.
         </p>
         <h3>Query parameters</h3>

@@ -147,8 +147,8 @@ export default function DocsApiCollections() {
   return (
     <DocsLayout title="Collections API">
       <p>
-        Create, browse, update, transfer, fork and delete collections. A collection is identified by{' '}
-        <code>:owner/:slug</code>.
+        Create, browse, update, transfer, fork, and delete collections. A collection is identified
+        by <code>:owner/:slug</code>.
       </p>
 
       <hr className="border-rule my-6" />
@@ -269,7 +269,7 @@ export default function DocsApiCollections() {
                 <code>403</code>
               </td>
               <td>
-                Not a member of the account, or a <code>read</code> key or a key scoped to specific
+                Not a member of the account, a <code>read</code> key, or a key scoped to specific
                 collections.
               </td>
             </tr>
@@ -309,7 +309,7 @@ export default function DocsApiCollections() {
         </pre>
         <p>
           <code>head</code> names the latest version by semver and version id. In{' '}
-          <code>latestVersion</code>, <code>pushedBy</code>, <code>pushedByName</code> and{' '}
+          <code>latestVersion</code>, <code>pushedBy</code>, <code>pushedByName</code>, and{' '}
           <code>actorId</code> are added for the collection&rsquo;s members. <code>ark</code> is
           null when the collection&rsquo;s ARK is off. <code>head</code> and{' '}
           <code>latestVersion</code> are null before the first push.
@@ -326,7 +326,7 @@ export default function DocsApiCollections() {
           <code>admin</code> key not scoped to specific collections
         </p>
         <p>
-          Update a collection&rsquo;s <code>name</code>, <code>slug</code> or <code>public</code>.
+          Update a collection&rsquo;s <code>name</code>, <code>slug</code>, or <code>public</code>.
           Pass only the fields to change. The response gives the collection&rsquo;s slug after the
           change.
         </p>
@@ -378,7 +378,7 @@ export default function DocsApiCollections() {
           gets <code>403</code>)
         </p>
         <p>
-          Delete a collection with its versions, push sessions and webhooks. Its stored data is
+          Delete a collection with its versions, push sessions, and webhooks. Its stored data is
           deleted later, after a grace period; records and files that another collection still uses,
           such as a fork, are kept.
         </p>
@@ -626,8 +626,8 @@ export default function DocsApiCollections() {
                 <code>403</code>
               </td>
               <td>
-                Not a member of the target org, or a <code>read</code> key or a key scoped to
-                specific collections.
+                Not a member of the target org, a <code>read</code> key, or a key scoped to specific
+                collections.
               </td>
             </tr>
             <tr>

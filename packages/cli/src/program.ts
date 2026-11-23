@@ -289,7 +289,7 @@ config
   })
 const rule = config
   .command('rule')
-  .description('Where records go, and what is kept, by authority, org or collection')
+  .description('Where records go, and what is kept, by authority, org, or collection')
 rule
   .command('add')
   .description('Send a collection’s records somewhere else, or set how much of it is kept')
@@ -538,7 +538,7 @@ program
 
 const asset = program
   .command('asset')
-  .description('A collection’s files (assets): PDFs, images and the like that records point to')
+  .description('A collection’s files (assets): PDFs, images, and the like that records point to')
 asset
   .command('ls', { isDefault: true })
   .description('The files the newest version names, and which are here')

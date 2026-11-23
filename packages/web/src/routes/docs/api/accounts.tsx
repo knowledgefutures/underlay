@@ -128,7 +128,7 @@ const deleteKeyRes = `{ "success": true }`
 export default function DocsApiAccounts() {
   return (
     <DocsLayout title="Accounts API">
-      <p>Manage accounts, organizations and API keys.</p>
+      <p>Manage accounts, organizations, and API keys.</p>
 
       <h2 id="authentication">Authentication</h2>
       <p>There are two authentication methods:</p>
@@ -151,7 +151,7 @@ export default function DocsApiAccounts() {
         organization to a Knowledge Futures account.
       </p>
       <p>
-        API keys have three scopes: <code>read</code>, <code>write</code> and <code>admin</code>. A
+        API keys have three scopes: <code>read</code>, <code>write</code>, and <code>admin</code>. A
         key never does more than its holder&rsquo;s role allows; see{' '}
         <a href="/docs/api#authentication" className="text-link hover:underline">
           Authentication
@@ -160,7 +160,7 @@ export default function DocsApiAccounts() {
         unscoped personal key: a key scoped to specific collections, or a key owned by an
         organization, gets <code>403</code>. Endpoints that change something also refuse{' '}
         <code>read</code> keys. Changing or deleting an organization, setting its NAAN (
-        <code>PATCH /api/accounts/:slug/ark</code>) and deleting your own account (
+        <code>PATCH /api/accounts/:slug/ark</code>), and deleting your own account (
         <code>DELETE /api/accounts/me</code>, from your settings) take a session or an{' '}
         <code>admin</code> key: a <code>write</code> key gets <code>403</code>, even when its holder
         is an owner. The <code>/api/auth/*</code> endpoints (organizations and API keys) need a
@@ -213,7 +213,7 @@ export default function DocsApiAccounts() {
         <p className="scope">No auth required</p>
         <p>
           List an account&rsquo;s members. The organization&rsquo;s own members see everyone, with
-          their roles (<code>owner</code>, <code>admin</code> or <code>member</code>), whether each
+          their roles (<code>owner</code>, <code>admin</code>, or <code>member</code>), whether each
           is listed publicly, and which is the caller. Anyone else sees only the members who chose
           to be listed, by name, without roles. An unknown slug returns <code>404</code>.
         </p>
@@ -311,7 +311,7 @@ export default function DocsApiAccounts() {
           <code>https</code> address), <code>location</code>, <code>coverTint</code> (whether a
           cover image takes the cover color), <code>coverColor</code> (<code>#rrggbb</code>),{' '}
           <code>provenanceNote</code> (up to 300), <code>pinned</code> (up to four of its own
-          collections&rsquo; ids, in order) and <code>kfOrgId</code> (the KF account it belongs to,
+          collections&rsquo; ids, in order), and <code>kfOrgId</code> (the KF account it belongs to,
           which must be one you belong to). <code>null</code> or an empty string clears a text field
           or the cover color; <code>kfOrgId</code> can move to another KF account but can&rsquo;t be
           cleared (<code>422</code>).
@@ -372,7 +372,7 @@ export default function DocsApiAccounts() {
           key
         </p>
         <p>
-          Delete an organization, with its memberships, invitations and API keys. An organization
+          Delete an organization, with its memberships, invitations, and API keys. An organization
           that still holds collections is refused with <code>409</code>: delete or transfer them
           first.
         </p>
@@ -423,7 +423,7 @@ export default function DocsApiAccounts() {
         </p>
         <p>
           Accept an invitation to an organization. <code>token</code> is the invitation&rsquo;s id;
-          the invitation must be pending, unexpired and addressed to your account&rsquo;s email.
+          the invitation must be pending, unexpired, and addressed to your account&rsquo;s email.
           Anything else returns <code>404</code>, whatever the reason.
         </p>
         <h3>Request</h3>
@@ -465,7 +465,7 @@ export default function DocsApiAccounts() {
                 <code>metadata.scope</code>
               </td>
               <td>
-                <code>read</code> (the default), <code>write</code> or <code>admin</code>.
+                <code>read</code> (the default), <code>write</code>, or <code>admin</code>.
               </td>
             </tr>
             <tr>

@@ -119,7 +119,7 @@ export default function DocsApi() {
           settings
         </Link>{' '}
         or with <code>POST /api/auth/api-key/create</code>. The <code>/api/auth/api-key/*</code>{' '}
-        routes need a signed-in session: a key cannot create, list or revoke keys.
+        routes need a signed-in session: a key cannot create, list, or revoke keys.
       </p>
 
       <h3>Session Cookies (browser)</h3>
@@ -159,8 +159,8 @@ export default function DocsApi() {
           </tr>
           <tr className="border-rule border-b">
             <td className="py-2 pr-4">
-              Anonymous web pages, ARK resolution and the sign-in routes (<code>/api/auth/*</code>),
-              per IP
+              Anonymous web pages, ARK resolution, and the sign-in routes (<code>/api/auth/*</code>
+              ), per IP
             </td>
             <td className="py-2 font-mono">600 units / minute</td>
           </tr>

@@ -331,7 +331,7 @@ export default function DocsApiSyncAndIntegrations() {
 
       <Endpoint route="PATCH …/:owner/:slug/webhooks/:id" scope="Auth: org owner or admin">
         <p>
-          Change any of <code>url</code>, <code>bumpFilter</code> and <code>enabled</code>, checked
+          Change any of <code>url</code>, <code>bumpFilter</code>, and <code>enabled</code>, checked
           as on create. Returns the updated webhook (without the secret).
         </p>
       </Endpoint>
@@ -345,7 +345,7 @@ export default function DocsApiSyncAndIntegrations() {
       <Endpoint route="POST …/:owner/:slug/webhooks/:id/test" scope="Auth: org owner or admin">
         <p>
           Queue a signed test delivery, returning <code>{'{"ok": true, "deliveryId"}'}</code>. Its
-          event is <code>ping</code>, its <code>version</code> is <code>null</code> and it carries{' '}
+          event is <code>ping</code>, its <code>version</code> is <code>null</code>, and it carries{' '}
           <code>{'"test": true'}</code>. It is logged with the other deliveries.
         </p>
       </Endpoint>
@@ -356,7 +356,7 @@ export default function DocsApiSyncAndIntegrations() {
       >
         <p>
           Recent deliveries, newest first (<code>limit</code> default 50, max 200).{' '}
-          <code>status</code> is <code>pending</code>, <code>success</code> or <code>failed</code>.
+          <code>status</code> is <code>pending</code>, <code>success</code>, or <code>failed</code>.
           Deliveries are kept for 30 days.
         </p>
         <CodeBlock>{deliveriesRes}</CodeBlock>
@@ -451,7 +451,7 @@ export default function DocsApiSyncAndIntegrations() {
             }
           </code>
           : <code>available</code> is whether the organization has a NAAN, and{' '}
-          <code>naanSource</code> is <code>&quot;own&quot;</code>, <code>&quot;kf&quot;</code> or{' '}
+          <code>naanSource</code> is <code>&quot;own&quot;</code>, <code>&quot;kf&quot;</code>, or{' '}
           <code>null</code>. PATCH takes <code>{'{"enabled"?, "customUrl"?}'}</code>:{' '}
           <code>customUrl</code> is an http(s) URL to redirect the collection and version ARKs to,
           or <code>null</code> to use the Underlay pages. Turning an ARK on without a NAAN is a{' '}
@@ -491,7 +491,7 @@ export default function DocsApiSyncAndIntegrations() {
       <p>
         An organization can add its own S3-compatible buckets as <strong>locations</strong> and{' '}
         <strong>mirror</strong> collections to them: Underlay keeps a copy of each collection there,
-        its signed commits, current layout, record files and files, at the keys the protocol uses
+        its signed commits, current layout, record files, and files, at the keys the protocol uses
         (see <Link to="/docs/protocol/repositories">Layouts and collections</Link>), so anyone with
         access to the bucket can read every version without Underlay. A new version is copied after
         it is published. The credentials must be able to both write and read the bucket. Managing

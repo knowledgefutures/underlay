@@ -98,7 +98,7 @@ const rules: [string, string, string][] = [
   ['Record id', 'Absent, not a string, empty, or over 1,024 UTF-8 bytes', 'bad_id'],
   [
     'Type',
-    'Absent, not a string, empty, over 128 UTF-8 bytes, beginning with ".", or containing /, \\, U+0000–U+001F or U+007F; beginning with "$" other than a reserved type; beginning with a character that sorts before "$" (U+0020–U+0023); or "__proto__"',
+    'Absent, not a string, empty, over 128 UTF-8 bytes, beginning with ".", or containing /, \\, U+0000–U+001F, or U+007F; beginning with "$" other than a reserved type; beginning with a character that sorts before "$" (U+0020–U+0023); or "__proto__"',
     'bad_type',
   ],
   ['Record size', 'A record line longer than 8,388,608 bytes', 'record_too_large'],
@@ -225,7 +225,7 @@ export default function ProtocolRecords() {
         A line that breaks several rules is reported with the code of the first in this order: the
         first violation in text order of an unterminated string or invalid escape (
         <code>syntax</code>), <code>duplicate_key</code>, <code>unsafe_integer</code>,{' '}
-        <code>lone_surrogate</code> or <code>too_deep</code>, whether or not the text is otherwise
+        <code>lone_surrogate</code>, or <code>too_deep</code>, whether or not the text is otherwise
         JSON; <code>syntax</code> for any other text that is not JSON; <code>bad_envelope</code> for
         a non-object; <code>bad_id</code> or <code>bad_type</code>; <code>bad_envelope</code> for
         the wrong members; <code>record_too_large</code>. The codes are part of the protocol.
@@ -247,7 +247,7 @@ export default function ProtocolRecords() {
         <li>
           any <code>pattern</code> or <code>patternProperties</code> key exceeds 256 UTF-16 code
           units. A <code>pattern</code> inside <code>const</code>, <code>enum</code>,{' '}
-          <code>default</code> or <code>examples</code> is data and is not limited;
+          <code>default</code>, or <code>examples</code> is data and is not limited;
         </li>
         <li>the type it is given for is not a valid type;</li>
         <li>
@@ -334,14 +334,14 @@ export default function ProtocolRecords() {
 
       <h2 id="underlay-ids">Underlay ids</h2>
       <p>
-        Outside the protocol&rsquo;s own objects (in record data, URLs, API responses and citations)
-        a record, an asset or a version is named by an Underlay id:
+        Outside the protocol&rsquo;s own objects (in record data, URLs, API responses, and
+        citations) a record, an asset, or a version is named by an Underlay id:
       </p>
       <CodeBlock>{ids}</CodeBlock>
       <p>
         An id is exact: lowercase, with no other spelling. A schema is a <code>$schema</code>{' '}
         record, so <code>ul:rec:</code> names schemas too; other kinds are reserved. Inside a
-        commit, layout, file entry or receipt a hash is bare hex, since the member it is in says
+        commit, layout, file entry, or receipt a hash is bare hex, since the member it is in says
         what it is, so no way of writing an id is part of anything hashed. There is no version
         number in an id: every kind is the SHA-256 of stored bytes, and those bytes say their own
         format.

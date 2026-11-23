@@ -276,7 +276,7 @@ export default function OwnerSettingsStorage() {
           <section id="locations" className="mb-10">
             <SectionHeading>Storage locations</SectionHeading>
             <p className="text-ink-muted mb-3 text-sm">
-              An S3-compatible bucket (AWS S3, Cloudflare R2, MinIO and others). Mirrors write each
+              An S3-compatible bucket (AWS S3, Cloudflare R2, MinIO, and others). Mirrors write each
               collection there as a complete, signed repository. Deleting a location or a mirror
               never deletes what was copied.
             </p>

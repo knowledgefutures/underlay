@@ -26,7 +26,7 @@ interface Collection {
 const SCOPE_HINTS: Record<string, string> = {
   read: 'Lists and downloads collections, private ones included.',
   write: 'Also pushes new versions.',
-  admin: 'Also changes settings, visibility, mirrors and webhooks, and deletes collections.',
+  admin: 'Also deletes collections and changes their settings, visibility, mirrors, and webhooks.',
 }
 
 /**

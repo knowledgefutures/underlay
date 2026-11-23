@@ -42,7 +42,7 @@ export default function Report() {
       <div className="mx-auto max-w-lg px-4 py-10">
         <h1 className="mb-1 text-xl font-semibold tracking-tight">Report content</h1>
         <p className="text-ink-muted mb-6 text-sm">
-          Tell us about a file or record on Underlay that is malicious, infringing or unlawful. A
+          Tell us about a file or record on Underlay that is malicious, infringing, or unlawful. A
           steward reviews every report, and blocked content stops being served at once.
         </p>
         {sent ? (

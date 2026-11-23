@@ -269,7 +269,7 @@ export default function DocsApiFiles() {
         <p>
           Send the file as the raw request body with the appropriate <code>Content-Type</code>{' '}
           header, or as <code>multipart/form-data</code> with the file in a <code>file</code> field.
-          HTML, XHTML, SVG and XML types are stored as <code>application/octet-stream</code>.
+          HTML, XHTML, SVG, and XML types are stored as <code>application/octet-stream</code>.
         </p>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{putExample}</code>
@@ -333,7 +333,7 @@ export default function DocsApiFiles() {
         <p>
           Larger files are multipart. The ticket gives <code>partBytes</code> (every part but the
           last is that long: at least 100 MiB, more when needed to fit), <code>partCount</code> (at
-          most 10,000) and presigned <code>parts</code> for the first 100 parts. Each part URL is
+          most 10,000), and presigned <code>parts</code> for the first 100 parts. Each part URL is
           valid for an hour.
         </p>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
@@ -397,7 +397,7 @@ export default function DocsApiFiles() {
         <p className="scope">Auth: write access</p>
         <p>
           An upload&rsquo;s state: <code>pending</code> (waiting for the bytes),{' '}
-          <code>verifying</code>, <code>verified</code> (this collection now holds the file) or{' '}
+          <code>verifying</code>, <code>verified</code> (this collection now holds the file), or{' '}
           <code>failed</code>, with the reason in <code>error</code>.
         </p>
         <h3>

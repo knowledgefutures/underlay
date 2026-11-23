@@ -12,10 +12,13 @@ const KEYS: [string, string][] = [
   ['← →', 'Switch a collection’s tabs'],
   [
     '↑ ↓ (in the pane)',
-    'Scroll, or choose a version, record or file; enter opens a record or a file, w saves a file to Downloads',
+    'Scroll, or choose a version, record, or file; enter opens a record or a file, w saves a file to Downloads',
   ],
   ['R', 'Run the selected script, or one that writes the selected collection'],
-  ['X, space, R', 'While a script runs: cancel, pause or resume, restart'],
+  [
+    'X, space, R',
+    'While a script runs: X cancels it, space pauses or resumes it, and R restarts it',
+  ],
   ['u', 'Undo the newest version not yet pushed, or a finished run’s versions'],
   ['l', 'Pull the selected collection'],
   [
@@ -127,7 +130,7 @@ need = ["ORCID_TOKEN"]`}</CodeBlock>
       </p>
       <p>
         <code>underlay add</code> keeps everything: a collection&apos;s records and its files (the
-        PDFs, images and other assets its records point to, at <code>assets/</code> in the store).
+        PDFs, images, and other assets its records point to, at <code>assets/</code> in the store).
         With <code>--keep records</code>, its records but not its files; with{' '}
         <code>--keep none</code>, only its schemas and history, and records are fetched from its
         authority when something reads them; <code>--keep some --types A,B</code> keeps some types.{' '}
@@ -191,7 +194,7 @@ underlay config rule add 'underlay.org/your-org/private' --path ~/Private/underl
 
       <h2>Scripts</h2>
       <p>
-        A script is a <code>.ts</code>, <code>.js</code>, <code>.mjs</code>, <code>.py</code> or{' '}
+        A script is a <code>.ts</code>, <code>.js</code>, <code>.mjs</code>, <code>.py</code>, or{' '}
         <code>.sh</code> file, or any executable, in your home&apos;s <code>scripts/</code> or a
         script folder. Its first lines say what it does; files without them, such as helpers,
         aren&apos;t scripts. It runs in its own folder, so its dependencies resolve. When it runs,{' '}
@@ -331,8 +334,8 @@ underlay runs <id> --follow   # one run's output`}</CodeBlock>
         </li>
         <li>
           A run started from the terminal UI keeps running when you close it.{' '}
-          <code>underlay pause</code>, <code>resume</code> and <code>cancel</code> take a run&apos;s
-          id.
+          <code>underlay pause</code>, <code>resume</code>, and <code>cancel</code> take a
+          run&apos;s id.
         </li>
       </ul>
 
@@ -425,7 +428,7 @@ underlay reword scratch "A better message"`}</CodeBlock>
           answers it.
         </li>
         <li>
-          Versions arrive as you saved them: the same numbers, contents and ids, so a version you
+          Versions arrive as you saved them: the same numbers, contents, and ids, so a version you
           cite from your machine is the version on the server. The server signs a receipt for each
           one (<Link to="/docs/protocol/push-and-pull">Push and pull</Link>).
         </li>

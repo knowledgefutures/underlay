@@ -39,8 +39,8 @@ export default function DocsConcepts() {
       <h2>Version</h2>
       <p>
         A collection&rsquo;s history is a log of <strong>commits</strong>. Each push, and each
-        metadata edit, adds one commit, which holds only what it changed: records added, changed or
-        removed, and changes to schemas, metadata and files. A <strong>version</strong> is the
+        metadata edit, adds one commit, which holds only what it changed: records added, changed, or
+        removed, and changes to schemas, metadata, and files. A <strong>version</strong> is the
         collection as of one commit: what the commits up to it add up to, with the newest change to
         each record winning. A published version never changes. Each version contains:
       </p>
@@ -66,7 +66,7 @@ export default function DocsConcepts() {
       </p>
       <ul>
         <li>A type added or removed, or a schema changed → major bump</li>
-        <li>Records added, removed or changed → minor bump</li>
+        <li>Records added, removed, or changed → minor bump</li>
         <li>Metadata or file changes only (readme, license, etc.) → patch bump</li>
       </ul>
       <p>
@@ -81,7 +81,7 @@ export default function DocsConcepts() {
 
       <h2>Record</h2>
       <p>
-        A <strong>record</strong> has an <code>id</code>, a <code>type</code> and a{' '}
+        A <strong>record</strong> has an <code>id</code>, a <code>type</code>, and a{' '}
         <code>data</code> payload. Records are the rows of your data. Within a version, a type and
         an id identify one record.
       </p>
@@ -138,8 +138,8 @@ export default function DocsConcepts() {
 
       <h2>Links</h2>
       <p>
-        Every record, file and version has an <strong>Underlay id</strong> built from its hash:{' '}
-        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:&lt;hash&gt;</code> and{' '}
+        Every record, file, and version has an <strong>Underlay id</strong> built from its hash:{' '}
+        <code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:&lt;hash&gt;</code>, and{' '}
         <code>ul:ver:&lt;hash&gt;</code>. Use them to cite exact data, and to link records across
         collections. A <strong>link</strong> is an object in a record&rsquo;s data:
       </p>
@@ -175,9 +175,9 @@ export default function DocsConcepts() {
       </ul>
       <p>
         API keys belong to a user or an organization and may be confined to some collections. A key
-        has the scope <code>read</code>, <code>write</code> or <code>admin</code>, and never exceeds
-        its holder&rsquo;s role: <code>read</code> and <code>write</code> keys act as a member, and
-        an <code>admin</code> key keeps an owner&rsquo;s or admin&rsquo;s powers. A
+        has the scope <code>read</code>, <code>write</code>, or <code>admin</code>, and never
+        exceeds its holder&rsquo;s role: <code>read</code> and <code>write</code> keys act as a
+        member, and an <code>admin</code> key keeps an owner&rsquo;s or admin&rsquo;s powers. A
         collection-scoped key acts as a member of its collections whatever its scope, and is refused
         on account and organization endpoints.
       </p>
@@ -187,7 +187,7 @@ export default function DocsConcepts() {
         Privacy is set per collection. A collection is <strong>public</strong> (listed in browse,
         readable by anyone) or <strong>private</strong> (readable only by members of the
         organization that owns it). The setting covers the whole collection: every version, record,
-        schema and file in it, earlier versions included. Only an organization&rsquo;s owners and
+        schema, and file in it, earlier versions included. Only an organization&rsquo;s owners and
         admins can change it. A collection created through the API is private unless the request
         sends <code>"public": true</code>.
       </p>

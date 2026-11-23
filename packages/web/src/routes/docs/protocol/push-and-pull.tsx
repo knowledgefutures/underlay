@@ -241,9 +241,9 @@ export default function ProtocolPushPull() {
       <p>
         A client can build a version itself: it writes the sorted-record-files with the reference
         library, and builds the whole commit, naming the version it follows as <code>previous</code>
-        . The commit&apos;s number, semver and id are then settled before it is sent, and the server
-        stores it unchanged, so the version has the same id on the client and on every server that
-        later holds it. The <Link to="/docs/cli">Underlay CLI</Link> pushes this way.
+        . The commit&apos;s number, semver, and id are then settled before it is sent, and the
+        server stores it unchanged, so the version has the same id on the client and on every server
+        that later holds it. The <Link to="/docs/cli">Underlay CLI</Link> pushes this way.
       </p>
       <CodeBlock>{uploadRoutes}</CodeBlock>
       <ul>

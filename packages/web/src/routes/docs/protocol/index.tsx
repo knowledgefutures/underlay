@@ -34,7 +34,7 @@ export default function ProtocolOverview() {
 
       <h2 id="conformance">Conformance</h2>
       <p>
-        The key words MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are to be interpreted as described
+        The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted as described
         in BCP 14 (<a href="https://www.rfc-editor.org/rfc/rfc2119">RFC 2119</a>,{' '}
         <a href="https://www.rfc-editor.org/rfc/rfc8174">RFC 8174</a>) when they appear in all
         capitals. Notes, examples, and sections marked informative are not normative.

@@ -149,12 +149,12 @@ export default function DocsIntegration() {
         </li>
         <li>
           <strong>Version</strong>: The collection as of one commit in its log, and immutable: a
-          JSON Schema per type, records, file references and metadata. Identified by semver (e.g.{' '}
+          JSON Schema per type, records, file references, and metadata. Identified by semver (e.g.{' '}
           <code>v1.0.0</code>) or by its <code>ul:ver:</code> id. Versions converted from the
           earlier format also answer to their old <code>ulv2:</code> ids.
         </li>
         <li>
-          <strong>Record</strong>: An <code>id</code>, a <code>type</code> and a <code>data</code>{' '}
+          <strong>Record</strong>: An <code>id</code>, a <code>type</code>, and a <code>data</code>{' '}
           payload conforming to the type&rsquo;s schema. Content-addressed by SHA-256 hash.
         </li>
         <li>
@@ -162,7 +162,7 @@ export default function DocsIntegration() {
           in records via <code>{fileRef}</code>.
         </li>
         <li>
-          <strong>Link</strong>: A pointer from a record to an exact record, file or version
+          <strong>Link</strong>: A pointer from a record to an exact record, file, or version
           anywhere on Underlay, by its id (<code>ul:rec:&lt;hash&gt;</code>, <code>ul:asset:</code>,{' '}
           <code>ul:ver:</code>):{' '}
           <code>{'{"$link": "ul:rec:...", "collection": "<id>", "type": "...", "id": "..."}'}</code>
@@ -183,10 +183,10 @@ export default function DocsIntegration() {
         <code>{'Authorization: Bearer ul_your_key_here'}</code>
       </pre>
       <p>
-        Keys are scoped <code>read</code>, <code>write</code> or <code>admin</code>; use{' '}
+        Keys are scoped <code>read</code>, <code>write</code>, or <code>admin</code>; use{' '}
         <code>write</code> for pushing data. A key never exceeds its holder&rsquo;s role: a{' '}
         <code>write</code> key acts as a member, and only an owner&rsquo;s or admin&rsquo;s{' '}
-        <code>admin</code> key can change visibility, delete or manage webhooks. A key confined to
+        <code>admin</code> key can change visibility, delete, or manage webhooks. A key confined to
         specific collections acts as a member whatever its scope. To let an AI agent push to one
         collection, create an <strong>agent link</strong> from the collection&rsquo;s Share panel:
         an instructions page at <code>https://www.underlay.org/agent/&lt;key&gt;</code> carrying a
@@ -205,7 +205,7 @@ export default function DocsIntegration() {
         <li>
           <strong>Open a session</strong> with <code>base</code> set to the semver you diffed
           against (<code>null</code> for the first push; <code>null</code> means no conflict check),
-          plus any schemas, metadata and files to declare. <code>schemas</code>, when sent, is the
+          plus any schemas, metadata, and files to declare. <code>schemas</code>, when sent, is the
           full type set: a type left out is removed, with its records. <code>metadata</code>{' '}
           replaces the metadata, <code>metadata_patch</code> merges into it. The response lists{' '}
           <code>needed_files</code> and the server&rsquo;s <code>limits</code>. Files go in{' '}
@@ -363,7 +363,7 @@ export default function DocsIntegration() {
           Schema changes, including a type added or removed → <strong>major</strong> bump
         </li>
         <li>
-          Record changes (added, changed or removed) → <strong>minor</strong> bump
+          Record changes (added, changed, or removed) → <strong>minor</strong> bump
         </li>
         <li>
           Metadata or file changes only → <strong>patch</strong> bump
@@ -477,7 +477,7 @@ export default function DocsIntegration() {
             <td>
               <code>GET .../versions/:semver/manifest</code>
             </td>
-            <td>Record ids, types and hashes, paged (supports delta via ?since=)</td>
+            <td>Record ids, types, and hashes, paged (supports delta via ?since=)</td>
           </tr>
           <tr>
             <td>

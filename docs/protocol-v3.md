@@ -1,10 +1,10 @@
 # Underlay protocol, version 3 (draft)
 
 **Status:** Draft, 2026-11-12; authority, author-built commits, receipts, and the routes a client follows a collection by, added 2026-11-16 (Sections 4.6 to 4.8); Underlay ids, links, and bare-hex
-versions inside commits added 2026-11-18 (Sections 2.1, 2.2 and 4). Not stable. Implemented in
+versions inside commits added 2026-11-18 (Sections 2.1, 2.2, and 4). Not stable. Implemented in
 `packages/protocol/src/v3/`, with ids and links in `packages/protocol/src/ids.ts` and
 `links.ts`. Where this document and the code disagree while both are drafts, fix whichever is
-wrong and say so in the commit. Test vectors for files, commits, ids and links are in
+wrong and say so in the commit. Test vectors for files, commits, ids, and links are in
 `packages/protocol/test/vectors/` (`v3-files.json`, `v3-commits.json`, `v3-links.json`),
 written by `packages/protocol/scripts/gen-vectors-v3.ts`.
 
@@ -60,8 +60,8 @@ member is refused: there is no `private`.
 
 ### 2.1 Underlay ids
 
-Outside the protocol's own objects (in record data, URLs, API responses and citations), a record,
-an asset or a version is named by an **Underlay id**:
+Outside the protocol's own objects (in record data, URLs, API responses, and citations), a record,
+an asset, or a version is named by an **Underlay id**:
 
 ```
 ul:rec:<hex>      a record: the hash of its line (Section 2)
@@ -73,7 +73,7 @@ ul:ver:<hex>      a version: its version id (Section 4)
 spelling. A schema is a `$schema` record, so `ul:rec:` names schemas too. Other kinds are
 reserved.
 
-Inside a commit, a layout file, a file entry or a receipt, a hash is bare hex: the member it is
+Inside a commit, a layout file, a file entry, or a receipt, a hash is bare hex: the member it is
 in says what it is. So no way of writing an id is part of what is hashed.
 
 There is no version number in an id. Every kind is the SHA-256 of stored bytes, which a reader
@@ -81,7 +81,7 @@ checks by hashing what it fetched, and those bytes say their own format.
 
 Informative: a server SHOULD take an id wherever a person gives one (a URL, a version selector,
 a search) as a `ul:` id or as bare hex, and MAY take the older forms `sha256:<hex>`, `ulv3:<hex>`
-(a version id as written before 2026-11-18, the same hash) and `ulv2:<hex>` (a v2 version hash).
+(a version id as written before 2026-11-18, the same hash), and `ulv2:<hex>` (a v2 version hash).
 
 ### 2.2 Links
 
@@ -398,7 +398,7 @@ commit it has just stored.
 
 **Replaying.** An author whose commit was refused builds it again on the newest version: the
 change stays as it was, except a `base` that named one of the commits being replayed, which
-names its replayed id; the number, `previous`, semver and time are made again, so the id
+names its replayed id; the number, `previous`, semver, and time are made again, so the id
 changes, as a rebased commit's does. A commit already accepted is never replayed.
 
 ### 4.7 Receipts
