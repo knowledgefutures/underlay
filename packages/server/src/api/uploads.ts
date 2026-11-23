@@ -15,7 +15,7 @@
  * A file's id is its content's (docs/protocol-v3.md, 3.4); the client builds it with the
  * library. The commit is verified and landed by jobs: poll the status until `committed`.
  */
-import type { v3 } from '@underlay/protocol'
+import { v3 } from '@underlay/protocol'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
@@ -81,9 +81,12 @@ export function uploadRoutes() {
     const body = await readJson(c, 64 * 1024)
     if (body instanceof Response) return body
     const str = (v: unknown) => (typeof v === 'string' ? v : null)
+    const base = str(body.base)
+    if (base !== null && v3.versionHex(base) === null)
+      return jsonError(c, 400, '"base" must be a version id: ul:ver:<hex>, or its bare hex')
     const u = await openUpload(c.var.ports, access.collection.id, c.var.principal!.userId, {
       message: str(body.message),
-      base: str(body.base),
+      base,
       appId: str(body.app_id),
     })
     if (!u) return jsonError(c, 429, `At most ${uploadLimits.open} open uploads`)

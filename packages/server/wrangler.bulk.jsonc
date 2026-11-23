@@ -10,12 +10,15 @@
 // isolates also keep a smaller memory cache (ROLE=bulk, stores.ts), since job
 // reads rarely repeat.
 //
-//   wrangler deploy --env staging                              (main Worker first: it gives up the bulk queue)
-//   wrangler deploy -c wrangler.bulk.jsonc --env staging       → underlay-staging-bulk
+//   wrangler deploy -c wrangler.bulk.jsonc --env staging       → underlay-staging-bulk (first)
+//   wrangler deploy --env staging                              (then the main Worker, at once)
 //
-// A queue has one consumer, so the main Worker's deploy, which no longer lists
-// the bulk queue, has to come first; bulk jobs wait on the queue until this
-// Worker is up. Secrets (wrangler secret put <NAME> -c wrangler.bulk.jsonc --env <env>),
+// Deploy this Worker first, at the same commit as the main one: it runs the jobs the main
+// Worker queues, so it must know a new kind of job, or a new field on one, before one is
+// sent. Deploy the main Worker straight after, so a cron tick doesn't run new sweep code
+// beside old routes. The COMMITS and POOL Durable Objects are the main Worker's classes and
+// run its code. (Main first was only for the deploy that moved the bulk queue off the main
+// Worker: a queue has one consumer.) Secrets (wrangler secret put <NAME> -c wrangler.bulk.jsonc --env <env>),
 // the same values as the main Worker's:
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, SIGNING_KEY, LOCATION_KEY
 //
@@ -128,6 +131,9 @@
         "OIDC_ISSUER_URL": "https://auth.knowledgefutures.org",
         "OIDC_ACCOUNT_URL": "https://auth.knowledgefutures.org/profile",
         "OIDC_CLIENT_ID": "kf_underlay",
+        // As in wrangler.jsonc. Nothing in a bulk job builds an ARK today; this keeps one
+        // that did from using the example NAAN.
+        "ARK_NAAN": "71144",
         "ASSETS_BASE_URL": "https://assets.underlay.org",
       },
       "r2_buckets": [

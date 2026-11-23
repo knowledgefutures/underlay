@@ -7,7 +7,7 @@
 //   wrangler deploy --env prod        → www.underlay.org
 //
 // Bulk jobs run in a second Worker from the same code, which consumes the bulk
-// queue: deploy it after this one (wrangler.bulk.jsonc says how, and why).
+// queue: deploy it first, then this one (wrangler.bulk.jsonc says how, and why).
 //
 // Secrets (wrangler secret put <NAME> --env <env>):
 //   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY   bucket-scoped R2 S3 credentials

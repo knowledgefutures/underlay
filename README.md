@@ -66,12 +66,14 @@ database, bucket and queues: `staging` (staging.underlay.org) and `prod` (www.un
 pnpm --filter @underlay/web build
 cd packages/server
 npx wrangler d1 migrations apply underlay-staging --env staging --remote   # new migrations only
+npx wrangler deploy -c wrangler.bulk.jsonc --env staging   # the bulk Worker first: same code, bulk, compact, and v3 queues
 npx wrangler deploy --env staging
-npx wrangler deploy -c wrangler.bulk.jsonc --env staging   # the bulk Worker: same code, bulk, compact and v3 queues
 ```
 
-Deploy both Workers at the same commit. The bulk Worker runs the long jobs, the v3 jobs and the
-cron's `maintenance.sweep`, so a change to any of those reaches staging only once it is deployed.
+Deploy both Workers at the same commit, the bulk Worker first and the main Worker straight
+after. The bulk Worker consumes the bulk, compact, and v3 queues and runs the cron's
+`maintenance.sweep`, so a change to those reaches staging only once it is deployed. The v3 jobs
+that run in the `V3Pool` and `CollectionCommits` Durable Objects run the main Worker's code.
 
 Secrets are SOPS-encrypted per deployment (`.env.staging.enc`); decrypt them into the shell, never
 to a file. Add migrations with `cd packages/server && npx drizzle-kit generate --name <name>`;

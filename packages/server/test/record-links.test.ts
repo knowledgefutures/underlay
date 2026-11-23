@@ -94,14 +94,13 @@ describe.skipIf(!onV3)('record links and version ids', () => {
       .where(where)
     expect(await semverOf(id)).toBe('v1.0.0')
     expect(await semverOf(`ulv3:${h64}`)).toBe('v1.0.0')
+    // A push follows a head whose row is still ulv3:, its commit naming it by bare hex.
+    const two = await push(h, user, base, [{ id: 'w2', type: 'Work', data: { title: 'Two' } }])
+    expect(two.status).toBe(201)
     expect(await backfillVersionIds(h.ports)).toBeGreaterThanOrEqual(1)
     const [row] = await h.ports.db.select().from(schema.versions).where(where)
     expect(row!.hash).toBe(id)
     expect(await backfillVersionIds(h.ports)).toBe(0)
-
-    // A second push follows the first, its commit naming it by bare hex.
-    const two = await push(h, user, base, [{ id: 'w2', type: 'Work', data: { title: 'Two' } }])
-    expect(two.status).toBe(201)
     // A link followed to where it can be read.
     const go = (q: string) =>
       h.request(`/api/links/resolve?${q}`, { headers: { accept: 'application/json' } })

@@ -29,7 +29,7 @@ export function versionIdIs(column: Column, id: string) {
 const BATCH = 500
 const DONE = 'backfills/version-ids-ul-ver.done'
 
-/** Move `versions.hash` from `ulv3:` to `ul:ver:`, a batch a tick, until none is left. */
+/** Move `versions.hash` from `ulv3:` to `ul:ver:`, a batch a tick, until a tick finds none. */
 export async function backfillVersionIds(ports: Ports): Promise<number> {
   if (await ports.stores.internal.head(DONE)) return 0
   const moved = await ports.db
@@ -46,7 +46,9 @@ export async function backfillVersionIds(ports: Ports): Promise<number> {
       ),
     )
     .returning({ id: schema.versions.id })
-  if (moved.length < BATCH) await ports.stores.internal.put(DONE, new Date().toISOString())
+  // Done after a run that finds nothing, not the first short one: until every Worker runs
+  // this code, an older one may still write a ulv3: row after a run has passed.
+  if (moved.length === 0) await ports.stores.internal.put(DONE, new Date().toISOString())
   if (moved.length > 0) console.log(`[v3] version ids: ${moved.length} moved to ul:ver:`)
   return moved.length
 }

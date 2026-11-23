@@ -1127,9 +1127,11 @@ async function landUpload(ports: Ports, uploadId: string) {
     stats.changes.updated += m.stats.changes.updated
   }
   const cid = upload.collectionId
-  const change =
-    upload.change ??
-    (await v3.makeChange(cid, { files, base: upload.base, message: upload.message }))
+  // A change kept before the deploy of 2026-11-22 may hold its base as ulv3:; a commit
+  // holds bare hex (checkChange takes either and keeps hex).
+  const change = upload.change
+    ? { ...upload.change, base: v3.versionHex(upload.change.base) ?? upload.change.base }
+    : await v3.makeChange(cid, { files, base: upload.base, message: upload.message })
   const obj = await internal.get(preparedKey(upload.id, upload.expectHead))
   if (!obj) {
     await fail(ports, upload.id, {

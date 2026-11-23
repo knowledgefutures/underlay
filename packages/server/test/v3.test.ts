@@ -576,6 +576,11 @@ describe.skipIf(!onV3)('v3 collections', () => {
     expect(up.commitStatus).toBe(422)
     expect(JSON.stringify(up.error)).toMatch(/bad/)
     expect((await lastRow(h.ports, c.id))!.seq).toBe(2)
+    // A base that is no version id is refused when the upload opens, not when it lands.
+    for (const bad of ['v1.0.0', 'latest', `ul:rec:${'a'.repeat(64)}`])
+      expect(
+        (await h.request(`${base}/uploads`, { method: 'POST', user, json: { base: bad } })).status,
+      ).toBe(400)
     // Not for a v2 collection.
     await h.collection('old', { recordLayout: 'today' })
     expect(
