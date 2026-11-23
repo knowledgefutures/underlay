@@ -74,28 +74,35 @@ function placeProblem(o: Record<string, unknown>): string | null {
  * if every link is well formed. A server refuses a record with one.
  */
 export function checkLinks(data: unknown): string | null {
-  const walk = (v: unknown, path: string): string | null => {
+  // Keys down to where the walk is; joined into a path only for a problem, since building a
+  // path at every node cost ten times the walk itself (2026-11-23, a 4 KB record).
+  const keys: (string | number)[] = []
+  const at = () => keys.reduce<string>((p, k) => pointer(p, k), '') || '/'
+  const walk = (v: unknown): string | null => {
     if (Array.isArray(v)) {
       for (let i = 0; i < v.length; i++) {
-        const p = walk(v[i], pointer(path, i))
+        keys.push(i)
+        const p = walk(v[i])
+        keys.pop()
         if (p) return p
       }
       return null
     }
     if (!isObject(v)) return null
     if (Object.hasOwn(v, LINK_MEMBER)) {
-      const at = path || '/'
-      if (!parseUlId(v[LINK_MEMBER])) return `$link at ${at} ${linkValueProblem(v[LINK_MEMBER])}`
+      if (!parseUlId(v[LINK_MEMBER])) return `$link at ${at()} ${linkValueProblem(v[LINK_MEMBER])}`
       const place = placeProblem(v)
-      return place ? `$link at ${at}: ${place}` : null
+      return place ? `$link at ${at()}: ${place}` : null
     }
     for (const k in v) {
-      const p = walk(v[k], pointer(path, k))
+      keys.push(k)
+      const p = walk(v[k])
+      keys.pop()
       if (p) return p
     }
     return null
   }
-  return walk(data, '')
+  return walk(data)
 }
 
 /**
