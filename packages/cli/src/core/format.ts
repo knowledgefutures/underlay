@@ -99,3 +99,6 @@ function changedFields(a: Uint8Array | null, b: Uint8Array | null): string[] {
   const keys = new Set([...Object.keys(da), ...Object.keys(db)])
   return [...keys].filter((k) => JSON.stringify(da[k]) !== JSON.stringify(db[k]))
 }
+
+/** A count and its noun, singular for one: `counted(1, 'asset')` is "1 asset". */
+export const counted = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`

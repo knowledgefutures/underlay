@@ -41,7 +41,7 @@ import {
 } from './core/config.js'
 import { coll, type Ctx, openColl, openCtx } from './core/context.js'
 import { CliError, defaultEnv, type Env, expandPath, tildePath } from './core/env.js'
-import { ago, bytes, count, diffVersions, duration, shortId } from './core/format.js'
+import { ago, bytes, count, counted, diffVersions, duration, shortId } from './core/format.js'
 import { Home, isLocal, keyOf, LOCAL } from './core/home.js'
 import {
   addFile,
@@ -447,7 +447,7 @@ program
       })
       const head = await v3.findHead(added.store.fs, cidOf(added))
       say(
-        `${KEEP_MARK[added.meta.keep]} ${added.key}: ${head ? head.commit.semver : 'no versions'}, ${pulled.fetched} versions, ${pulled.files} record files fetched${pulled.assets ? `, ${pulled.assets} assets` : ''}`,
+        `${KEEP_MARK[added.meta.keep]} ${added.key}: ${head ? head.commit.semver : 'no versions'}, ${counted(pulled.fetched, 'version')}, ${counted(pulled.files, 'record file')} fetched${pulled.assets ? `, ${counted(pulled.assets, 'asset')}` : ''}`,
       )
     }
   })
@@ -551,7 +551,7 @@ asset
       )
     say(
       rows.length
-        ? `${rows.length} assets, ${here.size} here${c.meta.keep === 'all' ? '' : ` (underlay keep ${c.key} fetches them)`}`
+        ? `${counted(rows.length, 'asset')}, ${here.size} here${c.meta.keep === 'all' ? '' : ` (underlay keep ${c.key} fetches them)`}`
         : 'No assets',
     )
   })
@@ -576,7 +576,7 @@ asset
     for (const a of stored) say(`${a.hash}  ${a.from}`)
     say(
       r.version
-        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${r.stats.assets} assets added`
+        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${counted(r.stats.assets, 'asset')} added`
         : `${cl.key}: it names these already`,
     )
   })
@@ -684,7 +684,7 @@ program
         const parts = [
           `${r.fetched} new versions`,
           r.files ? `${r.files} record files` : '',
-          r.assets ? `${r.assets} assets` : '',
+          r.assets ? counted(r.assets, 'asset') : '',
           r.schemas.length ? `schemas: ${r.schemas.join(', ')}` : '',
         ]
         tell(`${keyOf(meta)}: ${parts.filter(Boolean).join(', ')}`)

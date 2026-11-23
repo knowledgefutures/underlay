@@ -2,7 +2,7 @@ import type { RemoteListing } from '../core/collections.js'
 import { KEEP_LABEL, KEEP_MARK } from '../core/collections.js'
 import type { Keep } from '../core/config.js'
 import type { ColumnDraft } from '../core/draft.js'
-import { ago, bytes, count, duration, shortId } from '../core/format.js'
+import { ago, bytes, count, counted, duration, shortId } from '../core/format.js'
 import { isLocal, LOCAL } from '../core/home.js'
 import type { ImportOptions, Shape } from '../core/importers.js'
 import type { RemoteCollection } from '../core/remote.js'
@@ -355,7 +355,7 @@ export function collectionPane(
           S(
             `${KEEP_LABEL[m.keep]} · ${count(d.records)} records · ${bytes(d.bytes)}${
               d.assets?.length
-                ? ` · ${count(d.assets.length)} assets, ${count(d.assets.filter((f) => f.here).length)} here`
+                ? ` · ${count(d.assets.length)} ${d.assets.length === 1 ? 'asset' : 'assets'}, ${count(d.assets.filter((f) => f.here).length)} here`
                 : ''
             }`,
           ),
@@ -937,7 +937,7 @@ function peckLines(v: PushView): Line[] {
         p.done < p.total
           ? `  ${p.done} of ${p.total} ${p.assets ? 'assets' : 'files'}`
           : p.assets
-            ? `  ${p.total} assets sent`
+            ? `  ${counted(p.total, 'asset')} sent`
             : `  ${p.total} files sent; committing`,
         C.mu,
       ),

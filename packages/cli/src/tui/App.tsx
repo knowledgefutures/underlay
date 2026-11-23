@@ -38,7 +38,7 @@ import {
 import { type Coll, type Ctx, openColl } from '../core/context.js'
 import { type ColumnDraft, draftColumns, schemaFrom, TYPES } from '../core/draft.js'
 import { CliError, tildePath } from '../core/env.js'
-import { bytes, diffVersions } from '../core/format.js'
+import { bytes, counted, diffVersions } from '../core/format.js'
 import { copyText, handoffPrompt, type HandoffTarget, sendHandoff } from '../core/handoff.js'
 import {
   type CollectionMeta,
@@ -1817,7 +1817,7 @@ export function App({
             if (!w.records && !w.assets) return go()
             const what = [
               w.records ? `${w.records} record files (${bytes(w.recordBytes)})` : '',
-              w.assets ? `${w.assets} assets (${bytes(w.assetBytes)})` : '',
+              w.assets ? `${counted(w.assets, 'asset')} (${bytes(w.assetBytes)})` : '',
             ]
               .filter(Boolean)
               .join(' and ')
