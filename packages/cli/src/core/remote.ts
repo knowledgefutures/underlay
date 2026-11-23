@@ -88,6 +88,9 @@ export interface CommitPage {
 export interface UploadStatus {
   upload_id: string
   status: 'open' | 'verifying' | 'landing' | 'committing' | 'committed' | 'failed' | 'expired'
+  /** Sorted-record-files the commit names, and those checked; `files_…` before 2026-11-22. */
+  record_files_named?: number
+  record_files_verified?: number
   files_named?: number
   files_verified?: number
   present?: string[]
@@ -252,14 +255,14 @@ export class Remote {
     ).layout
   }
 
-  // --- Assets: the files a collection's `$asset` rows name, through the server's file routes ---
+  // --- Assets: the bytes a collection's `$asset` rows name (PDFs, images), at …/assets ---
 
   /** Download links for assets, at most 500 a call: null for one the collection doesn't name. */
   async assetUrls(org: string, name: string, hashes: string[]): Promise<Map<string, string>> {
     const out = new Map<string, string>()
     for (let i = 0; i < hashes.length; i += 500) {
       const got = await this.post<Record<string, string | null>>(
-        `${this.collectionPath(org, name)}/files/presign`,
+        `${this.collectionPath(org, name)}/assets/presign`,
         { hashes: hashes.slice(i, i + 500) },
       )
       for (const [h, url] of Object.entries(got)) if (url) out.set(h, url)
@@ -285,7 +288,7 @@ export class Remote {
 
   /** Whether the collection already reads this asset (it names it, or it was sent to it). */
   async hasAsset(org: string, name: string, hash: string): Promise<boolean> {
-    const res = await this.request(`${this.collectionPath(org, name)}/files/${hash}`, {
+    const res = await this.request(`${this.collectionPath(org, name)}/assets/${hash}`, {
       method: 'HEAD',
     })
     return res.ok
@@ -302,7 +305,7 @@ export class Remote {
     bytes: Uint8Array,
     mediaType: string | null,
   ): Promise<void> {
-    const base = `${this.collectionPath(org, name)}/files`
+    const base = `${this.collectionPath(org, name)}/assets`
     const type = mediaType ?? 'application/octet-stream'
     if (bytes.byteLength <= SMALL_ASSET_BYTES) {
       await this.json(`${base}/${hash}`, {
@@ -367,10 +370,13 @@ export class Remote {
     return this.json<UploadStatus>(`${this.collectionPath(org, name)}/uploads/${upload}`)
   }
 
-  /** Send one file of an upload, by presigned URL, each PUT retried. */
+  /** Send one sorted-record-file of an upload, by presigned URL, each PUT retried. */
   async sendFile(org: string, name: string, upload: string, id: string, bytes: Uint8Array) {
     const base = `${this.collectionPath(org, name)}/uploads/${upload}`
-    const target = await this.post<PresignedTarget>(`${base}/files`, { id, size: bytes.byteLength })
+    const target = await this.post<PresignedTarget>(`${base}/record-files`, {
+      id,
+      size: bytes.byteLength,
+    })
     const put = (url: string, body: Uint8Array, what: string) =>
       withRetry(
         what,
@@ -400,7 +406,7 @@ export class Remote {
       )
       parts.push({ n: p.n, etag })
     }
-    await this.post(`${base}/files/${id}/complete`, { upload_id: target.upload_id, parts })
+    await this.post(`${base}/record-files/${id}/complete`, { upload_id: target.upload_id, parts })
   }
 
   /** Commit an upload with the commit its author built; the status once settled. */
@@ -412,6 +418,8 @@ export class Remote {
     progress: (s: UploadStatus) => void = () => {},
   ): Promise<UploadStatus> {
     const base = `${this.collectionPath(org, name)}/uploads/${upload}`
+    // The body names its sorted-record-files `files`, not `record_files`: a server deployed
+    // before 2026-11-22 reads only `files`, and a newer one reads either.
     const res = await this.request(`${base}/commit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

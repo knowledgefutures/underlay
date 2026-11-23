@@ -337,7 +337,7 @@ function UseTheData({ example }: { example: HomeExample | null }) {
                 <span className="text-ink font-semibold">Records</span>
                 <span>Schemas</span>
                 <span>Versions</span>
-                <span>Files</span>
+                <span>Assets</span>
               </div>
               <div className="p-4">
                 {example?.typeCounts.length ? (

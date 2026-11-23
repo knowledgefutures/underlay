@@ -16,7 +16,7 @@ export async function loader({ params, request }: LoaderFunctionArgs) {
   const tab = url.searchParams.get('tab')
   const token = url.searchParams.get('token')
   const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
-  if (tab === 'files') throw redirect(`${base}/files${tokenQuery}`)
+  if (tab === 'files') throw redirect(`${base}/assets${tokenQuery}`)
   if (tab === 'schema') throw redirect(`${base}/schemas${tokenQuery}`)
   if (url.searchParams.get('type') || url.searchParams.get('page')) {
     const q = new URLSearchParams()

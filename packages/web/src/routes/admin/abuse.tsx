@@ -6,7 +6,7 @@ import { useAppContext } from '~/lib/app-context'
 
 /**
  * Stewards: open abuse reports, and the hash denylist. Blocking a hash stops
- * every file redirect and record read of it within a minute
+ * every asset redirect and record read of it within a minute
  * (packages/server/src/lib/limits.ts); it changes no version.
  */
 
@@ -97,7 +97,7 @@ export default function AdminAbuse() {
                       }
                       className="w-auto"
                     >
-                      <option value="file">File</option>
+                      <option value="file">Asset</option>
                       <option value="record">Record</option>
                     </Select>
                     <Button
@@ -144,7 +144,7 @@ export default function AdminAbuse() {
               <div className="min-w-0">
                 <p className="font-mono text-xs break-all">{e.hash}</p>
                 <p className="text-ink-muted text-xs">
-                  <Badge>{e.kind}</Badge> {e.reason}
+                  <Badge>{e.kind === 'file' ? 'asset' : e.kind}</Badge> {e.reason}
                 </p>
               </div>
               <Button

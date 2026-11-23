@@ -139,11 +139,11 @@ describe('the mouse', () => {
 })
 
 describe('inside a collection', () => {
-  it('keeps up and down in the pane, opens a record, and saves a file', async () => {
+  it('keeps up and down in the pane, opens a record, and saves an asset', async () => {
     const w = await world()
     const Paper = {
       type: 'object',
-      properties: { name: { type: 'string' }, pdf: { type: 'object', required: ['$file'] } },
+      properties: { name: { type: 'string' }, pdf: { type: 'object', required: ['$asset'] } },
     }
     for (const name of ['aaa', 'zzz']) {
       const meta = newCollection(w.ctx, `test/org/${name}`)
@@ -157,7 +157,7 @@ describe('inside a collection', () => {
     const [file] = await storeAssets(c, [pdf])
     await saveVersion(c, {
       rows: [
-        v3.rowFromRecord('p1', 'Paper', { name: 'One', pdf: { $file: `sha256:${file!.hash}` } }),
+        v3.rowFromRecord('p1', 'Paper', { name: 'One', pdf: { $asset: `ul:asset:${file!.hash}` } }),
         v3.rowFromRecord('p2', 'Paper', { name: 'Two' }),
       ],
       mode: 'set',
@@ -178,14 +178,15 @@ describe('inside a collection', () => {
     await d.press(K.down)
     await d.until(/▌ Paper\s+p2/)
     await d.press(K.up, K.enter)
-    let f = await d.until('"$file"')
+    let f = await d.until('"$asset"')
     expect(f).toContain('"name": "One"')
     await d.press(K.esc)
     await d.until(/▌ Paper\s+p1/)
     expect(d.frame()).toMatch(/aaa ─/)
-    // Files: the file, the record that points to it, and w saves a copy.
+    // Assets: the asset, the record that attaches it, and w saves a copy.
     await d.press(K.right, K.right)
     f = await d.until('application/pdf')
+    expect(f).toMatch(/ Assets /)
     expect(f).toMatch(/▌ ✓ [0-9a-f]{12}\s+application\/pdf\s+11 B\s+Paper p1/)
     await d.press('w')
     await d.until(/Saved .*paper-p1-[0-9a-f]{12}\.pdf/)
@@ -588,7 +589,7 @@ describe('everyday flows in the terminal UI', () => {
     await d.press('m', K.enter)
     await d.until('Delete')
     await d.press('y', K.enter)
-    f = await d.until(/metadata only, let go of \d+ files here/)
+    f = await d.until(/metadata only, let go of \d+ record files and assets here/)
     expect(f).toMatch(/kept\s+○/)
     // Back up to everything fetches them again, without asking.
     await d.press('k')

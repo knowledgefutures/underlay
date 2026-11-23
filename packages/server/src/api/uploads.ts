@@ -2,15 +2,19 @@
  * Client-built uploads to a v3 collection (v3/uploads.ts; v3-deploy-plan.md, Phase 2),
  * mounted at /api/collections:
  *
- *   POST   /:owner/:slug/uploads                          open one {message?, base?, app_id?}
- *   POST   /:owner/:slug/uploads/:id/files                {id, size} → a presigned PUT, or parts
- *   POST   /:owner/:slug/uploads/:id/files/:fid/complete  {upload_id, parts: [{n, etag}]}
- *   POST   /:owner/:slug/uploads/:id/commit               {files: [FileRef…], change?} (a change unsigned),
- *                                                         or {files, commit}: a commit its author built
- *                                                         (protocol-v3 4.6), stored unchanged or refused
- *                                                         with 409 and the newest version
- *   GET    /:owner/:slug/uploads/:id                      status, files present, result
- *   DELETE /:owner/:slug/uploads/:id                      abandon (while it is open)
+ *   POST   /:owner/:slug/uploads                                 open one {message?, base?, app_id?}
+ *   POST   /:owner/:slug/uploads/:id/record-files                {id, size} → a presigned PUT, or parts
+ *   POST   /:owner/:slug/uploads/:id/record-files/:fid/complete  {upload_id, parts: [{n, etag}]}
+ *   POST   /:owner/:slug/uploads/:id/commit                      {record_files: [FileRef…], change?} (a change
+ *                                                                unsigned), or {record_files, commit}: a commit
+ *                                                                its author built (protocol-v3 4.6), stored
+ *                                                                unchanged or refused with 409 and the newest version
+ *   GET    /:owner/:slug/uploads/:id                             status, files present, result
+ *   DELETE /:owner/:slug/uploads/:id                             abandon (while it is open)
+ *
+ * The files are sorted-record-files. Their routes and fields were first named `files`
+ * (`…/uploads/:id/files`, `files_named`): those names still work, beside `record-files` and
+ * `record_files`.
  *
  * A file's id is its content's (docs/protocol-v3.md, 3.4); the client builds it with the
  * library. The commit is verified and landed by jobs: poll the status until `committed`.
@@ -19,6 +23,7 @@ import { v3 } from '@underlay/protocol'
 import { type Context, Hono } from 'hono'
 
 import type { AppEnv } from '../app.js'
+import { withAssetNames } from '../lib/asset-names.js'
 import {
   abandonUpload,
   type Authored,
@@ -65,10 +70,12 @@ const statusBody = (u: UploadRow, present?: string[]) => ({
   upload_id: u.id,
   status: u.status,
   expires_at: u.expiresAt,
+  record_files_named: Array.isArray(u.files) ? u.files.length : 0,
+  record_files_verified: u.verified,
   files_named: Array.isArray(u.files) ? u.files.length : 0,
   files_verified: u.verified,
   ...(present ? { present } : {}),
-  result: u.result ?? null,
+  result: withAssetNames(u.result ?? null),
   error: u.error ?? null,
 })
 
@@ -95,9 +102,11 @@ export function uploadRoutes() {
         upload_id: u.id,
         expires_at: u.expiresAt,
         limits: {
+          record_files: uploadLimits.files,
           files: uploadLimits.files,
           single_put_bytes: uploadLimits.singlePutBytes,
           part_bytes: uploadLimits.partBytes,
+          max_record_file_bytes: uploadLimits.maxFileBytes,
           max_file_bytes: uploadLimits.maxFileBytes,
         },
       },
@@ -105,38 +114,41 @@ export function uploadRoutes() {
     )
   })
 
-  app.post('/:owner/:slug/uploads/:id/files', async (c) => {
-    const access = await v3Collection(c)
-    if (access instanceof Response) return access
-    const u = await ownUpload(c, access)
-    if (u instanceof Response) return u
-    if (u.status !== 'open') return jsonError(c, 409, `Upload is ${u.status}`)
-    const body = await readJson(c, 4096)
-    if (body instanceof Response) return body
-    const id = String(body.id ?? '')
-    const size = Number(body.size)
-    if (!HEX64.test(id)) return jsonError(c, 400, '"id" must be a file id (64 hex)')
-    if (!Number.isSafeInteger(size) || size <= 0 || size > uploadLimits.maxFileBytes)
-      return jsonError(c, 400, `"size" must be 1 to ${uploadLimits.maxFileBytes} bytes`)
-    return c.json(await presignFile(c.var.ports, u, id, size))
-  })
+  // Sorted-record-files: at `record-files`, and at `files`, which clients still call.
+  for (const seg of ['record-files', 'files'] as const) {
+    app.post(`/:owner/:slug/uploads/:id/${seg}`, async (c) => {
+      const access = await v3Collection(c)
+      if (access instanceof Response) return access
+      const u = await ownUpload(c, access)
+      if (u instanceof Response) return u
+      if (u.status !== 'open') return jsonError(c, 409, `Upload is ${u.status}`)
+      const body = await readJson(c, 4096)
+      if (body instanceof Response) return body
+      const id = String(body.id ?? '')
+      const size = Number(body.size)
+      if (!HEX64.test(id)) return jsonError(c, 400, '"id" must be a file id (64 hex)')
+      if (!Number.isSafeInteger(size) || size <= 0 || size > uploadLimits.maxFileBytes)
+        return jsonError(c, 400, `"size" must be 1 to ${uploadLimits.maxFileBytes} bytes`)
+      return c.json(await presignFile(c.var.ports, u, id, size))
+    })
 
-  app.post('/:owner/:slug/uploads/:id/files/:fid/complete', async (c) => {
-    const access = await v3Collection(c)
-    if (access instanceof Response) return access
-    const u = await ownUpload(c, access)
-    if (u instanceof Response) return u
-    if (u.status !== 'open') return jsonError(c, 409, `Upload is ${u.status}`)
-    const body = await readJson(c, 1024 * 1024)
-    if (body instanceof Response) return body
-    const fid = c.req.param('fid')
-    if (!HEX64.test(fid) || typeof body.upload_id !== 'string' || body.upload_id.length > 1024)
-      return jsonError(c, 400, 'Needs {upload_id, parts: [{n, etag}]}')
-    const parts = checkParts(body.parts)
-    if (typeof parts === 'string') return jsonError(c, 400, parts)
-    await completeFile(c.var.ports, u, fid, body.upload_id, parts)
-    return c.json({ ok: true })
-  })
+    app.post(`/:owner/:slug/uploads/:id/${seg}/:fid/complete`, async (c) => {
+      const access = await v3Collection(c)
+      if (access instanceof Response) return access
+      const u = await ownUpload(c, access)
+      if (u instanceof Response) return u
+      if (u.status !== 'open') return jsonError(c, 409, `Upload is ${u.status}`)
+      const body = await readJson(c, 1024 * 1024)
+      if (body instanceof Response) return body
+      const fid = c.req.param('fid')
+      if (!HEX64.test(fid) || typeof body.upload_id !== 'string' || body.upload_id.length > 1024)
+        return jsonError(c, 400, 'Needs {upload_id, parts: [{n, etag}]}')
+      const parts = checkParts(body.parts)
+      if (typeof parts === 'string') return jsonError(c, 400, parts)
+      await completeFile(c.var.ports, u, fid, body.upload_id, parts)
+      return c.json({ ok: true })
+    })
+  }
 
   app.post('/:owner/:slug/uploads/:id/commit', async (c) => {
     const access = await v3Collection(c)
@@ -145,8 +157,13 @@ export function uploadRoutes() {
     if (u instanceof Response) return u
     const body = await readJson(c, 16 * 1024 * 1024)
     if (body instanceof Response) return body
-    const checked = checkCommitBody(body)
-    if (typeof checked === 'string') return jsonError(c, 400, checked)
+    // The sorted-record-files are "record_files", or "files" as clients first sent them.
+    if (body.record_files !== undefined && body.files !== undefined)
+      return jsonError(c, 400, 'Send "record_files" or "files", not both')
+    const named = body.record_files !== undefined ? 'record_files' : 'files'
+    const checked = checkCommitBody({ files: body[named] })
+    if (typeof checked === 'string')
+      return jsonError(c, 400, checked.replace('"files"', `"${named}"`))
     // A change the client prepared names the same files, for this collection.
     let change: v3.Change | null = null
     let authored: Authored | null = null

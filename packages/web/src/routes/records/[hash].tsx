@@ -208,13 +208,12 @@ function RecordDetail({ record }: { record: RecordData }) {
 function FieldValue({ name, value }: { name: string; value: unknown }) {
   const ref = asLink(value)
   if (ref?.attached) {
-    const fileHash = ref.hash
     // Routes through the API so access is checked and a presigned URL is minted.
-    const fileUrl = `/api/collections/files/${fileHash}`
-    const label = name === 'pdf' ? 'PDF' : 'File'
+    const assetUrl = `/api/collections/assets/${ref.hash}`
+    const label = name === 'pdf' ? 'PDF' : 'Asset'
     return (
       <a
-        href={fileUrl}
+        href={assetUrl}
         target="_blank"
         rel="noopener noreferrer"
         className="text-link inline-flex items-center gap-1 hover:underline"

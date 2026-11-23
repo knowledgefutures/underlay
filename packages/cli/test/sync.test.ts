@@ -241,7 +241,7 @@ describe('versions here, push and pull', () => {
     await expect(undo(a)).rejects.toThrow(/no versions that are not pushed/)
   })
 
-  it('sends files (assets) before the push that names them, and keeps them by level', async () => {
+  it('sends assets before the push that names them, and keeps them by level', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/papers')
     w.home.writeSchemas(meta, { Person })
@@ -260,13 +260,13 @@ describe('versions here, push and pull', () => {
       now: new Date(),
       assets: stored,
     })
-    expect(added.stats.files).toBe(1)
+    expect(added.stats.assets).toBe(1)
     expect((await unpushedAssets(a)).map((x) => x.hash)).toEqual([stored[0]!.hash])
 
     // The push sends the bytes first; the authority then takes the $asset row.
     const files: FileProgress[] = []
     await push(w.ctx, a, w.ctx.say, (p) => files.push(p))
-    expect(files.some((p) => p.semver === 'assets')).toBe(true)
+    expect(files.some((p) => p.assets && p.direction === 'up')).toBe(true)
     expect(await unpushedAssets(a)).toEqual([])
 
     // Another machine keeping everything fetches it; data without assets lets it go.

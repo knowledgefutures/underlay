@@ -134,7 +134,7 @@ export default function AdminBilling() {
     },
     {
       key: 'filebytes',
-      label: 'File egress',
+      label: 'Asset egress',
       numeric: true,
       sort: (o) => o.usage.file_bytes,
       render: (o) => formatBytes(o.usage.file_bytes),

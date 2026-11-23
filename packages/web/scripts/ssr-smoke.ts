@@ -298,7 +298,16 @@ try {
     },
     { path: '/org/authors/v/v1.0.0', status: 302, location: '/org/authors/v/1.0.0' },
     { path: '/org/authors/schemas', status: 200, has: ['Author', 'born', 'integer'] },
-    { path: '/org/authors/files', status: 200, has: ['Files — org/authors'] },
+    { path: '/org/authors/assets', status: 200, has: ['Assets — org/authors', 'No assets'] },
+    { path: '/org/authors/v/1.0.0/assets', status: 200, has: ['Assets 1.0.0 — org/authors'] },
+    // The Files tab was renamed Assets: its old URLs redirect.
+    { path: '/org/authors/files?token=x', status: 301, location: '/org/authors/assets?token=x' },
+    { path: '/org/authors/v/1.0.0/files', status: 301, location: '/org/authors/v/1.0.0/assets' },
+    {
+      path: '/org/authors/v/1.0.0?tab=files',
+      status: 302,
+      location: '/org/authors/v/1.0.0/assets',
+    },
     { path: '/org', status: 200, has: ['Smoke Org', 'authors'], lacks: ['secret'] },
     { path: `/records/${adaHash}`, status: 200, has: ['Ada Lovelace', 'org/authors'] },
     { path: '/records/abc123', status: 404 },

@@ -46,8 +46,8 @@ export const SECTIONS: [Section, Hint[]][] = [
     [
       ['←→', 'tabs'],
       ['↑↓', 'in the pane: scroll, or choose'],
-      ['enter', 'open a record or a file'],
-      ['w', 'save a file to Downloads (Files)'],
+      ['enter', 'open a record or an asset'],
+      ['w', 'save an asset to Downloads (Assets)'],
       ['l', 'pull'],
       ['u', 'undo last change'],
       ['k', 'keep everything, data, or metadata'],

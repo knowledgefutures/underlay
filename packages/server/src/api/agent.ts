@@ -330,7 +330,7 @@ ${e(recordLines)}</pre>
 <h3>Step 3: Commit</h3>
 <pre>POST ${e(`${api}/push/`)}&lt;session_id&gt;/commit
 Authorization: Bearer ${e(token)}</pre>
-<p>A 201 answers with the new version: <code>${e(JSON.stringify({ semver: 'v1.1.0', hash: 'ul:ver:…', recordCount: 1, fileCount: 0 }))}</code>. A 409 &ldquo;Version conflict&rdquo; means someone published after you opened the session: open a new one with the current version as <code>base</code> and upload again.</p>
+<p>A 201 answers with the new version: <code>${e(JSON.stringify({ semver: 'v1.1.0', hash: 'ul:ver:…', recordCount: 1, assetCount: 0 }))}</code>. A 409 &ldquo;Version conflict&rdquo; means someone published after you opened the session: open a new one with the current version as <code>base</code> and upload again.</p>
 
 <h2>Endpoints</h2>
 <table class="kv">

@@ -181,7 +181,7 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
       schemas = { ...(await schemasAt(c.store.fs, view)), ...schemas }
       const listed = await listAssets(c)
       const here = new Set((await assetsHere(c, listed)).map((a) => a.hash))
-      // Which record points to each file, read from the records where there aren't too many.
+      // Which record attaches each asset, read from the records where there aren't too many.
       const by = new Map<string, string>()
       if (listed.length && records <= 100_000) {
         const dec = new TextDecoder()

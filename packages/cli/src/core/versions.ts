@@ -106,8 +106,8 @@ export interface SaveInput {
 
 export interface SaveResult {
   version: StoredCommit | null
-  /** Records added, changed and removed; schemas changed; files (assets) newly named. */
-  stats: { added: number; changed: number; removed: number; schemas: number; files: number }
+  /** Records added, changed and removed; schemas changed; assets newly named. */
+  stats: { added: number; changed: number; removed: number; schemas: number; assets: number }
 }
 
 function inScope(input: SaveInput, type: string, line: Uint8Array | null): boolean {
@@ -127,7 +127,7 @@ export async function saveVersion(c: Coll, input: SaveInput): Promise<SaveResult
   const fs = c.store.fs
   const head = await headOf(c)
   const view = head ? await v3.openView(c.data, cid) : emptyView(cid)
-  const stats = { added: 0, changed: 0, removed: 0, schemas: 0, files: 0 }
+  const stats = { added: 0, changed: 0, removed: 0, schemas: 0, assets: 0 }
 
   // --- Schema rows: home's schemas against the head's ---
   const headSchemas = await schemasAt(c.data, view)
@@ -146,7 +146,7 @@ export async function saveVersion(c: Coll, input: SaveInput): Promise<SaveResult
     schemaRows.push(
       v3.rowFromRecord(a.hash, v3.ASSET_TYPE, { size: a.size, mediaType: a.mediaType }),
     )
-    stats.files++
+    stats.assets++
   }
   schemaRows.sort(v3.compareKey)
   stats.schemas = schemaRows.length

@@ -29,10 +29,11 @@ underlay sources [add <path>|rm|init]     script folders: shared git repos of sc
 underlay secret set <NAME>                a secret a script folder needs, kept in the keychain (a 0600 file off a Mac)
 underlay login [remote]                   an API key from <remote>/settings/keys, kept in the keychain (a 0600 file off a Mac)
 underlay ls [remote] [--public [q]]       your orgs' collections (◐ ○ part here, blank all, + not)
-underlay add underlay.org/mitp/mit-ai     its folder, schemas, log, records, and files (less with --keep)
+underlay add underlay.org/mitp/mit-ai     its folder, schemas, log, records, and assets (less with --keep)
 underlay new scratch                      one on this machine only: no server, org, or sign-in
 underlay new underlay.org/mitp/x          one that isn't on its authority yet; push creates it
 underlay publish scratch mitp/scratch     a local one to a server; its first push creates it
+underlay asset add <collection> <file…>   PDFs, images: a version that names them; asset ls lists them
 underlay status [--json] [--fetch]
 underlay run <script> [args] [--detach]   saves a version for each collection it changed
 underlay view <view>                      a page, or a script that serves one on $PORT
@@ -63,6 +64,9 @@ comment (`// underlay: writes underlay.org/mitp/mit-ai`, or `check`, `takes *.xl
 left alone. A script runs in its folder and writes NDJSON to
 `$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson`: the whole collection by default
 (`mode additions` for changes only; `types` and `where` to narrow what it is the whole of).
+A record attaches an asset with `{"$asset": "ul:asset:<sha256 hex>"}` in its data, and the
+script writes the bytes anywhere under `$UNDERLAY_OUT/assets/` (`{"$file": "sha256:<hex>"}`
+and `$UNDERLAY_OUT/files/` still work).
 `AGENTS.md` in home says the same for agents.
 
 ## Code

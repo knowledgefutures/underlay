@@ -93,6 +93,7 @@ export function exportRoutes() {
     const schemas: Record<string, unknown> = {}
     for (const t of view.types) schemas[t.slug] = await repo.schema(t.schemaHash)
     const recordCount = [...sizes.values()].reduce((n, s) => n + s.count, 0)
+    const missing = list.filter((h) => !stored.has(h))
     const manifest = enc.encode(
       JSON.stringify(
         {
@@ -109,14 +110,17 @@ export function exportRoutes() {
             message: v.message,
             recordCount,
             fileCount: fileHashes.size,
+            assetCount: fileHashes.size,
             totalBytes:
               [...sizes.values()].reduce((n, s) => n + s.bytes - s.count * PER_RECORD_EXTRA, 0) +
               [...fileHashes.values()].reduce((a, b) => a + b, 0),
             createdAt: v.createdAt,
           },
           schemas,
-          files_missing: list.filter((h) => !stored.has(h)),
+          files_missing: missing,
           files_withheld: withheldFiles,
+          assets_missing: missing,
+          assets_withheld: withheldFiles,
         },
         null,
         2,

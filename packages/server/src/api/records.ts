@@ -1,9 +1,10 @@
 /**
- * Records and files by hash, through the reference log (v1 shapes).
+ * Records and assets by hash, through the reference log (v1 shapes).
  *
  *   GET  /api/records/:hash/provenance
  *   POST /api/records/batch                    {hashes} → NDJSON {id,type,data,hash}
- *   GET  /api/collections/files/:hash          302, from any collection the caller may read
+ *   GET  /api/collections/assets/:hash         302, from any collection the caller may read
+ *                                              (and at its old path, /api/collections/files/:hash)
  *
  * Results are filtered by the caller's access before anything is returned,
  * counts included (edge-redesign.md, Security notes): a presence counts only if
@@ -18,6 +19,7 @@ import { meter } from '../billing/usage.js'
 import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { cleanHash, isHash, presignDownload } from '../files/files.js'
+import { ASSET_SEGMENTS } from '../lib/asset-names.js'
 import { deniedHashes, isDenied } from '../lib/limits.js'
 import { eventsFor, type Presence, presenceOf } from '../refs/log.js'
 import { fileSizes } from '../versions/file-refs.js'
@@ -287,23 +289,27 @@ export function recordRoutes() {
     })
   })
 
-  app.get('/api/collections/files/:hash', async (c) => {
-    const hash = cleanHash(c.req.param('hash'))
-    if (!isHash(hash)) return jsonError(c, 404, 'File not found')
-    const items = await visiblePresence(c, hash, await memberOrgs(c))
-    const found = items.find((i) => i.p.kind === 'f')
-    if (!found) return jsonError(c, 404, 'File not found')
-    // After the access check: a 451 would confirm the file exists to anyone.
-    if (await isDenied(c.var.ports.db, hash)) return jsonError(c, 451, 'This file is unavailable')
-    const url = await presignDownload(c.var.ports, hash)
-    if (!url) return jsonError(c, 404, 'File not found')
-    // Billed to the first collection the caller may read it from.
-    const on = { id: found.c.id, accountId: found.c.organizationId }
-    const [size] = (await fileSizes(c.var.ports.db, [hash])).values()
-    meter(c.var.meter, 'file_downloads', 1, on)
-    meter(c.var.meter, 'file_bytes', size ?? 0, on)
-    return c.redirect(url, 302)
-  })
+  // At its asset path and at its old files path, which clients still call.
+  for (const seg of ASSET_SEGMENTS) {
+    app.get(`/api/collections/${seg}/:hash`, async (c) => {
+      const hash = cleanHash(c.req.param('hash'))
+      if (!isHash(hash)) return jsonError(c, 404, 'Asset not found')
+      const items = await visiblePresence(c, hash, await memberOrgs(c))
+      const found = items.find((i) => i.p.kind === 'f')
+      if (!found) return jsonError(c, 404, 'Asset not found')
+      // After the access check: a 451 would confirm the asset exists to anyone.
+      if (await isDenied(c.var.ports.db, hash))
+        return jsonError(c, 451, 'This asset is unavailable')
+      const url = await presignDownload(c.var.ports, hash)
+      if (!url) return jsonError(c, 404, 'Asset not found')
+      // Billed to the first collection the caller may read it from.
+      const on = { id: found.c.id, accountId: found.c.organizationId }
+      const [size] = (await fileSizes(c.var.ports.db, [hash])).values()
+      meter(c.var.meter, 'file_downloads', 1, on)
+      meter(c.var.meter, 'file_bytes', size ?? 0, on)
+      return c.redirect(url, 302)
+    })
+  }
 
   return app
 }

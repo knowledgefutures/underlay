@@ -136,7 +136,7 @@ export default function AdminOperations() {
 
       <SectionHeading>Background work</SectionHeading>
       <p className="mb-2 text-sm">
-        Direct file uploads, last 7 days:{' '}
+        Direct asset uploads, last 7 days:{' '}
         {Object.keys(data.uploads).length === 0
           ? 'none'
           : Object.entries(data.uploads)
@@ -162,7 +162,7 @@ export default function AdminOperations() {
       <SectionHeading>Tools</SectionHeading>
       <CollectionTool
         title="Reconcile a collection"
-        hint="Rebuilds its billing counters, schema usage, and public files tree from its versions, and reports what it corrected."
+        hint="Rebuilds its billing counters, schema usage, and public assets tree from its versions, and reports what it corrected."
         endpoint="/api/admin/reconcile"
       />
       <CollectionTool
@@ -203,7 +203,7 @@ const fsckResult = (r: any): ToolResult => ({
   finishedAt: r.checkedAt ?? null,
   running: !!r.running,
   summary: r.ok
-    ? `Repository OK: ${plural(r.versions, 'version')}, ${plural(r.records, 'record')}, ${plural(r.files, 'file')}; log checked with ${r.log}.`
+    ? `Repository OK: ${plural(r.versions, 'version')}, ${plural(r.records, 'record')}, ${plural(r.files, 'asset')}; log checked with ${r.log}.`
     : `${plural(r.errors.length + (r.moreErrors ?? 0), 'problem')} found:`,
   problems: [
     ...(r.errors ?? []),
@@ -224,7 +224,7 @@ function CollectionTool({
   title: string
   hint: string
   endpoint: string
-  /** Offer the fsck option of hashing file bytes too. */
+  /** Offer the fsck option of hashing asset bytes too. */
   fileBytes?: boolean
 }) {
   const [collection, setCollection] = useState('')
@@ -302,7 +302,7 @@ function CollectionTool({
         {fileBytes && (
           <label className="text-ink-muted flex items-center gap-1.5 text-xs">
             <Checkbox checked={withBytes} onChange={(e) => setWithBytes(e.target.checked)} />
-            Hash file bytes too
+            Hash asset bytes too
           </label>
         )}
         <Button type="submit" size="sm" disabled={!!following}>

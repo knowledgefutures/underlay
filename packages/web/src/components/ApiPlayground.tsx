@@ -64,14 +64,14 @@ function getEndpoints(slug: string, collectionSlug: string): Endpoint[] {
             method: 'GET',
             path: `/api/collections/${slug}/${collectionSlug}/versions/latest`,
             body: '',
-            description: 'Returns the latest version with records and files.',
+            description: 'Returns the latest version with records and assets.',
           },
           {
-            label: 'List files',
+            label: 'List assets',
             method: 'GET',
-            path: `/api/collections/${slug}/${collectionSlug}/versions/latest/files`,
+            path: `/api/collections/${slug}/${collectionSlug}/versions/latest/assets`,
             body: '',
-            description: 'Returns the files in the latest version.',
+            description: 'Returns the assets in the latest version.',
           },
         ]
       : []),

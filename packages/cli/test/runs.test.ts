@@ -1,5 +1,6 @@
 /** Scripts and runs (phase 2), and built-in imports (phase 3). */
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -162,12 +163,12 @@ writeFileSync(dir + '/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\
     expect(again.saved).toMatchObject([{ collection: 'test/org/papers', semver: 'v1.0.0' }])
   })
 
-  it('stores the files a run wrote that its records point to, and refuses a missing one', async () => {
+  it('stores the assets a run wrote that its records attach, and refuses a missing one', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/papers')
     const Paper = {
       type: 'object',
-      properties: { title: { type: 'string' }, pdf: { type: 'object', required: ['$file'] } },
+      properties: { title: { type: 'string' }, pdf: { type: 'object', required: ['$asset'] } },
       required: ['title'],
     }
     w.home.writeSchemas(meta, { Paper })
@@ -177,13 +178,13 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 const out = process.env.UNDERLAY_OUT
 mkdirSync(out + '/test/org', { recursive: true })
-mkdirSync(out + '/files/pdfs', { recursive: true })
+mkdirSync(out + '/assets/pdfs', { recursive: true })
 const sha = (b) => createHash('sha256').update(b).digest('hex')
 const a = Buffer.from('first paper'), b = Buffer.from('second paper')
-writeFileSync(out + '/files/pdfs/a.pdf', a)
-writeFileSync(out + '/files/b.pdf', b)
-writeFileSync(out + '/files/stray.txt', 'nothing points here')
-const ref = (x) => ({ $file: 'sha256:' + sha(x) })
+writeFileSync(out + '/assets/pdfs/a.pdf', a)
+writeFileSync(out + '/assets/b.pdf', b)
+writeFileSync(out + '/assets/stray.txt', 'nothing points here')
+const ref = (x) => ({ $asset: 'ul:asset:' + sha(x) })
 const rows = [
   { id: 'p1', type: 'Paper', data: { title: 'One', pdf: ref(a) } },
   { id: 'p2', type: 'Paper', data: { title: 'Two', pdf: ref(b) } },
@@ -201,7 +202,7 @@ writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)
     expect(r.saved).toMatchObject([
       { collection: 'test/org/papers', added: 3, files: { added: 2, bytes: 23, here: 0 } },
     ])
-    expect(said).toContain('1 file in files/ that no record points to was left out')
+    expect(said).toContain('1 file in assets/ that no record attaches was left out')
     const c = openColl(w.ctx, meta)
     const { listAssets } = await import('../src/core/assets.js')
     expect((await listAssets(c)).map((a) => a.mediaType)).toEqual([
@@ -209,14 +210,88 @@ writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)
       'application/pdf',
     ])
 
-    // A record pointing to a file the run didn't write: nothing is saved, and it says which.
+    // A record attaching an asset the run didn't write: nothing is saved, and it says which.
     writeFileSync(join(w.home.root, 'scripts', 'papers.mjs'), script(true))
     const bad = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {})
     expect(bad.status).toBe('failed')
     expect(bad.error).toMatch(
-      /^org\/papers: 1 record points to a file the run didn't write: Paper p77  pdf  sha256:[0-9a-f]{6}… Write it to \$UNDERLAY_OUT\/files\/, or leave the field out\.$/,
+      /^org\/papers: 1 record attaches an asset the run didn't write: Paper p77  pdf  ul:asset:[0-9a-f]{6}… Write its bytes to \$UNDERLAY_OUT\/assets\/, or leave the field out\.$/,
     )
     expect(bad.saved).toEqual([])
+  })
+
+  it('attaches with an older $file, from files/, as it does with $asset', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'test/org/papers')
+    w.home.writeSchemas(meta, { Paper: { type: 'object' } })
+    mkdirSync(join(w.home.root, 'scripts'), { recursive: true })
+    // One record each way, and the same bytes named both ways: one asset, stored once.
+    writeFileSync(
+      join(w.home.root, 'scripts', 'papers.mjs'),
+      `// underlay: writes test/org/papers
+import { createHash } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+const out = process.env.UNDERLAY_OUT
+mkdirSync(out + '/test/org', { recursive: true })
+mkdirSync(out + '/files', { recursive: true })
+mkdirSync(out + '/assets', { recursive: true })
+const sha = (b) => createHash('sha256').update(b).digest('hex')
+const a = Buffer.from('first paper'), b = Buffer.from('second paper')
+writeFileSync(out + '/files/a.pdf', a)
+writeFileSync(out + '/assets/b.pdf', b)
+const rows = [
+  { id: 'p1', type: 'Paper', data: { pdf: { $file: 'sha256:' + sha(a) } } },
+  { id: 'p2', type: 'Paper', data: { pdf: { $asset: 'ul:asset:' + sha(b) } } },
+  { id: 'p3', type: 'Paper', data: { pdf: { $asset: 'ul:asset:' + sha(a) } } },
+]
+writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\\n') + '\\n')
+`,
+    )
+    const r = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {})
+    expect(r.status).toBe('ok')
+    expect(r.saved).toMatchObject([
+      { collection: 'test/org/papers', added: 3, files: { added: 2, bytes: 23, here: 0 } },
+    ])
+    const { assetsHere, listAssets } = await import('../src/core/assets.js')
+    const c = openColl(w.ctx, meta)
+    const sha = (t: string) => createHash('sha256').update(t).digest('hex')
+    const listed = await listAssets(c)
+    expect(listed.map((a) => a.hash).sort()).toEqual(
+      [sha('first paper'), sha('second paper')].sort(),
+    )
+    expect(await assetsHere(c, listed)).toHaveLength(2)
+  })
+
+  it('stops the save at a malformed $asset, with the protocol’s message', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'test/org/papers')
+    w.home.writeSchemas(meta, { Paper: { type: 'object' } })
+    mkdirSync(join(w.home.root, 'scripts'), { recursive: true })
+    writeFileSync(
+      join(w.home.root, 'scripts', 'papers.mjs'),
+      `// underlay: writes test/org/papers
+import { createHash } from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+const out = process.env.UNDERLAY_OUT
+mkdirSync(out + '/test/org', { recursive: true })
+mkdirSync(out + '/assets', { recursive: true })
+const a = Buffer.from('first paper')
+const hex = createHash('sha256').update(a).digest('hex')
+writeFileSync(out + '/assets/a.pdf', a)
+const rows = [
+  { id: 'p1', type: 'Paper', data: { title: 'One' } },
+  { id: 'p2', type: 'Paper', data: { files: [{ pdf: { $asset: 'sha256:' + hex } }] } },
+]
+writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\\n') + '\\n')
+`,
+    )
+    const r = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {})
+    expect(r.status).toBe('failed')
+    expect(r.error).toBe(
+      'org/papers: Paper p2: $asset at /files/0/pdf is a sha256: hash: write ul:asset:<hex>',
+    )
+    expect(r.saved).toEqual([])
+    expect(await unpushedOf(openColl(w.ctx, meta))).toEqual([])
   })
 
   it('matches a dropped file to a collection by its ids, imports it, holds rows without ids', async () => {

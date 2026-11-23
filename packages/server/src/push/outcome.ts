@@ -62,6 +62,7 @@ export async function commitOutcome(
       body: {
         error: MISSING_FILES,
         filesNeeded: err.hashes.slice(0, 100),
+        assetsNeeded: err.hashes.slice(0, 100),
         statusCode: 422,
       },
     }
@@ -122,6 +123,7 @@ function committedBody(v: VersionRow): Record<string, unknown> {
     hash: v.hash,
     recordCount: v.recordCount,
     fileCount: v.fileCount,
+    assetCount: v.fileCount,
     changes: v.changes,
   }
 }

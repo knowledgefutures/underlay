@@ -109,7 +109,7 @@ describe.skipIf(!onV3)('record links and version ids', () => {
       url: `/org/lib/v/latest/records/Work/w%201?hash=${h64}`,
     })
     expect(await json(await go(`to=ul:asset:${h64}&collection=${c.id}`))).toEqual({
-      url: `/api/collections/_/${c.id}/files/${h64}`,
+      url: `/api/collections/_/${c.id}/assets/${h64}`,
     })
     expect(await json(await go(`to=ul:rec:${h64}`))).toEqual({ url: `/records/${h64}` })
     expect((await go(`to=${h64}`)).status).toBe(400)

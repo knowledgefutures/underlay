@@ -100,9 +100,9 @@ function Body({ data }: { data: Overview }) {
           detail={`${formatBytes(t.historyBytes)} over ${plural(t.versions, 'version')}`}
         />
         <StatTile
-          label="Unique files stored"
+          label="Unique assets stored"
           value={formatBytes(t.uniqueFileBytes)}
-          detail={`${compact(t.uniqueFiles)} files`}
+          detail={`${compact(t.uniqueFiles)} assets`}
         />
         <StatTile label="Schemas" value={compact(t.schemas)} />
         <StatTile label="Reference log events" value={compact(t.refEvents)} />
@@ -115,9 +115,9 @@ function Body({ data }: { data: Overview }) {
         <StatTile
           label="Egress"
           value={formatBytes(u.response_bytes + u.file_bytes)}
-          detail={`${formatBytes(u.response_bytes)} API, ${formatBytes(u.file_bytes)} files`}
+          detail={`${formatBytes(u.response_bytes)} API, ${formatBytes(u.file_bytes)} assets`}
         />
-        <StatTile label="File downloads" value={compact(u.file_downloads)} />
+        <StatTile label="Asset downloads" value={compact(u.file_downloads)} />
       </StatGrid>
       <UsageChart daily={data.daily} />
       <p className="text-ink-muted text-xs">

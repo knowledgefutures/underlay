@@ -11,6 +11,7 @@ import { and, eq, lt } from 'drizzle-orm'
 
 import { fenced } from '../cleanup/fence.js'
 import * as schema from '../db/schema.js'
+import { withAssetNames } from '../lib/asset-names.js'
 import type { Ports } from '../ports.js'
 import { commitV3Session } from '../v3/commit.js'
 import { compactForCommit } from './compact.js'
@@ -65,12 +66,14 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
 
 /** The outcome a session that isn't committing has recorded. */
 function recorded(session: SessionRow): Outcome {
-  if (session.status === 'committed') return { status: 201, body: session.result ?? {} }
+  // Stored before the asset names were added, a body lacks them.
+  if (session.status === 'committed')
+    return { status: 201, body: withAssetNames(session.result ?? {}) }
   if (session.status === 'committing') return pendingOutcome(session.id)
   if (session.error)
     return {
       status: (session.error.statusCode ?? 400) as Outcome['status'],
-      body: session.error,
+      body: withAssetNames(session.error),
     }
   return {
     status: 409,

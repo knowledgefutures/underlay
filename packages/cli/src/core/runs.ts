@@ -50,7 +50,10 @@ export interface SavedVersion {
   added: number
   changed: number
   removed: number
-  /** Files its records point to: stored new from the run, and already here. */
+  /**
+   * Assets its records attach: stored new from the run, and already here. Named `files` in
+   * run records written before 2026-11-22, and kept so they read the same.
+   */
   files?: { added: number; bytes: number; here: number }
 }
 
@@ -234,10 +237,10 @@ function outputsOf(out: string): string[] {
 }
 
 /**
- * The files a collection's output points to, as `$asset` rows for its version: from the run's
- * files/, or already in the store. A record pointing to a file that is neither stops the save.
+ * The assets a collection's output attaches, as `$asset` rows for its version: from the run's
+ * assets/, or already in the store. A record attaching one that is neither stops the save.
  */
-async function filesFor(
+async function assetsFor(
   c: Coll,
   output: string,
   written: Map<string, { path: string; size: number; mediaType: string | null }>,
@@ -285,7 +288,7 @@ async function filesFor(
     const m = missing[0]!
     const name = c.key.split('/').slice(-2).join('/')
     throw new CliError(
-      `${name}: ${missing.length} record${missing.length === 1 ? ' points' : 's point'} to a file the run didn't write: ${m.type} ${m.id}  ${m.field}  sha256:${m.hash.slice(0, 6)}… Write it to $UNDERLAY_OUT/files/, or leave the field out.`,
+      `${name}: ${missing.length} record${missing.length === 1 ? ' attaches' : 's attach'} an asset the run didn't write: ${m.type} ${m.id}  ${m.field}  ul:asset:${m.hash.slice(0, 6)}… Write its bytes to $UNDERLAY_OUT/assets/, or leave the field out.`,
     )
   }
   return { add, here }
@@ -483,8 +486,9 @@ export async function runScript(
       record.status = cancelled ? 'cancelled' : 'failed'
       record.error = cancelled ? 'Cancelled' : `Exited with ${code ?? 'a signal'}`
     } else {
-      // The files it wrote, for the records that point to them.
-      const written = runFiles(join(out, 'files'))
+      // The assets it wrote, for the records that attach them: in assets/, or files/ as runs
+      // wrote them before 2026-11-22.
+      const written = new Map([...runFiles(join(out, 'files')), ...runFiles(join(out, 'assets'))])
       const used = new Set<string>()
       // Each collection it wrote, compared with the head.
       for (const key of outputsOf(out)) {
@@ -500,7 +504,7 @@ export async function runScript(
         }
         if (!writes.includes(key)) releases.push(lock(ctx, key, id))
         const c = openColl(ctx, meta)
-        const files = await filesFor(c, join(out, `${key}.ndjson`), written, used)
+        const files = await assetsFor(c, join(out, `${key}.ndjson`), written, used)
         const res = await saveVersion(c, {
           assets: files.add,
           rows: fileRows(join(out, `${key}.ndjson`)),
@@ -538,7 +542,7 @@ export async function runScript(
       const unused = [...written.keys()].filter((h) => !used.has(h)).length
       if (unused)
         emit(
-          `underlay: ${unused} file${unused === 1 ? '' : 's'} in files/ that no record points to ${unused === 1 ? 'was' : 'were'} left out\n`,
+          `underlay: ${unused} file${unused === 1 ? '' : 's'} in assets/ that no record attaches ${unused === 1 ? 'was' : 'were'} left out\n`,
         )
       record.status = 'ok'
     }

@@ -14,8 +14,8 @@ export type Usage = Record<Metric, number>
 export const METRIC_LABELS: Record<Metric, string> = {
   api_calls: 'API calls',
   response_bytes: 'Response bytes',
-  file_downloads: 'File downloads',
-  file_bytes: 'File bytes',
+  file_downloads: 'Asset downloads',
+  file_bytes: 'Asset bytes',
 }
 
 const isBytes = (m: Metric) => m === 'response_bytes' || m === 'file_bytes'

@@ -7,7 +7,7 @@
  *   GET /:owner/:slug/versions/:n/records.ndjson     stream; ?after_type=&after= resumes
  *   GET /:owner/:slug/versions/:n/manifest           ids and hashes from nodes; ?since= delta
  *   GET /:owner/:slug/versions/:n/diff               ?from= (default: the version before); O(changes)
- *   GET /:owner/:slug/versions/:n/files              from the visible file trees
+ *   GET /:owner/:slug/versions/:n/assets             from the visible file trees (old path: …/files)
  *
  * Privacy is decided once: the view holds the sets the caller may read.
  * Records list order: by id within a type; without ?type=, types in slug order
@@ -33,6 +33,7 @@ import { type Context, Hono } from 'hono'
 import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { ASSET_SEGMENTS, assetList } from '../lib/asset-names.js'
 import { deniedHashes } from '../lib/limits.js'
 import { previewRecord } from '../lib/preview.js'
 import { pullStream } from '../lib/streams.js'
@@ -515,10 +516,7 @@ export function versionRoutes() {
     const since = c.req.query('since')
     const fileList = async () => {
       if (cursor) return {}
-      const files = await visibleFiles(view, MANIFEST_MAX + 1)
-      return files.length > MANIFEST_MAX
-        ? { files: files.slice(0, MANIFEST_MAX), filesTruncated: true }
-        : { files }
+      return assetList(await visibleFiles(view, MANIFEST_MAX + 1), MANIFEST_MAX)
     }
 
     if (since) {
@@ -568,6 +566,7 @@ export function versionRoutes() {
         delta,
         // The file list rides on the first page only, as for a full manifest.
         files: [],
+        assets: [],
         ...(await fileList()),
         pagination: { limit, hasMore: next !== null, nextCursor: next },
       })
@@ -596,6 +595,7 @@ export function versionRoutes() {
       schemas,
       records,
       files: [],
+      assets: [],
       ...(await fileList()),
       pagination: { limit, hasMore: next !== null, nextCursor: next },
     })
@@ -682,6 +682,8 @@ export function versionRoutes() {
           JSON.stringify(fromView?.root.metadata ?? null) !== JSON.stringify(view.root.metadata),
         filesAdded: fileDelta.added,
         filesRemoved: fileDelta.removed,
+        assetsAdded: fileDelta.added,
+        assetsRemoved: fileDelta.removed,
       },
     })
     const head = JSON.stringify({ from: from?.semver ?? null, to: view.version.semver })
@@ -692,46 +694,49 @@ export function versionRoutes() {
     )
   })
 
-  app.get('/:owner/:slug/versions/:n/files', async (c) => {
-    const access = await requireCollection(c, 'read')
-    if (access instanceof Response) return access
-    if (access.collection.recordLayout === 'v3') return v3Files(c, access)
-    const view = await viewFor(c, access)
-    if (view instanceof Response) return view
-    const hashes = await visibleFiles(view, 10_000)
-    const rows = []
-    for (const part of chunks(hashes, JSON_CHUNK)) {
-      rows.push(
-        ...(await c.var.ports.db
-          .select()
-          .from(schema.files)
-          .where(inJson(schema.files.hash, part))),
+  // At its asset path and at its old files path, which clients still call.
+  for (const seg of ASSET_SEGMENTS) {
+    app.get(`/:owner/:slug/versions/:n/${seg}`, async (c) => {
+      const access = await requireCollection(c, 'read')
+      if (access instanceof Response) return access
+      if (access.collection.recordLayout === 'v3') return v3Files(c, access)
+      const view = await viewFor(c, access)
+      if (view instanceof Response) return view
+      const hashes = await visibleFiles(view, 10_000)
+      const rows = []
+      for (const part of chunks(hashes, JSON_CHUNK)) {
+        rows.push(
+          ...(await c.var.ports.db
+            .select()
+            .from(schema.files)
+            .where(inJson(schema.files.hash, part))),
+        )
+      }
+      const byHash = new Map(rows.map((r) => [r.hash, r]))
+      // Which records reference a file isn't indexed in v2 (it would take a scan of
+      // every body); how many do is, in each set's count tree. A caller who reads
+      // only the public set sees only public references, as in v1.
+      // Only the listed hashes' range of each count tree, not the whole tree.
+      const range = hashes.length ? { from: hashes[0]!, through: hashes.at(-1)! } : undefined
+      const counts = range
+        ? await referenceCounts(view.repo, view.version.publicRefsRoot, range)
+        : new Map<string, number>()
+      if (view.private && range) {
+        for (const [h, n] of await referenceCounts(view.repo, view.version.privateRefsRoot, range))
+          counts.set(h, (counts.get(h) ?? 0) + n)
+      }
+      return c.json(
+        hashes.map((h) => ({
+          hash: h,
+          size: byHash.get(h)?.size ?? null,
+          mimeType: byHash.get(h)?.mimeType ?? null,
+          createdAt: byHash.get(h)?.createdAt ?? null,
+          referenceCount: counts.get(h) ?? 0,
+          references: [],
+        })),
       )
-    }
-    const byHash = new Map(rows.map((r) => [r.hash, r]))
-    // Which records reference a file isn't indexed in v2 (it would take a scan of
-    // every body); how many do is, in each set's count tree. A caller who reads
-    // only the public set sees only public references, as in v1.
-    // Only the listed hashes' range of each count tree, not the whole tree.
-    const range = hashes.length ? { from: hashes[0]!, through: hashes.at(-1)! } : undefined
-    const counts = range
-      ? await referenceCounts(view.repo, view.version.publicRefsRoot, range)
-      : new Map<string, number>()
-    if (view.private && range) {
-      for (const [h, n] of await referenceCounts(view.repo, view.version.privateRefsRoot, range))
-        counts.set(h, (counts.get(h) ?? 0) + n)
-    }
-    return c.json(
-      hashes.map((h) => ({
-        hash: h,
-        size: byHash.get(h)?.size ?? null,
-        mimeType: byHash.get(h)?.mimeType ?? null,
-        createdAt: byHash.get(h)?.createdAt ?? null,
-        referenceCount: counts.get(h) ?? 0,
-        references: [],
-      })),
-    )
-  })
+    })
+  }
 
   return app
 }

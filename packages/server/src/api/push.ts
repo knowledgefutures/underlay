@@ -18,6 +18,7 @@ import { cleanupConfig } from '../cleanup/config.js'
 import * as schema from '../db/schema.js'
 import { SMALL_UPLOAD_BYTES } from '../files/files.js'
 import { registerJob } from '../jobs.js'
+import { withAssetNames } from '../lib/asset-names.js'
 import type { Ports } from '../ports.js'
 import {
   headBase,
@@ -64,6 +65,7 @@ export const pushLimits = (session: Pick<SessionRow, 'inKeyOrder'> = { inKeyOrde
   session_idle_seconds: SESSION_TTL_MS / 1000,
   open_sessions: limits.openSessions,
   file_bytes: SMALL_UPLOAD_BYTES,
+  asset_bytes: SMALL_UPLOAD_BYTES,
 })
 
 registerJob('push.commit', async (job, ports) => {
@@ -170,13 +172,13 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
       })
   if (!started) {
     const now = await getSession(ports, session.id)
-    if (now?.status === 'committed') return c.json(now.result ?? {}, 201)
+    if (now?.status === 'committed') return c.json(withAssetNames(now.result ?? {}), 201)
     if (now?.status === 'failed')
       return jsonError(
         c,
         409,
         'Session failed, and not in a way committing again can fix; push again in a new session',
-        { cause: now.error ?? null },
+        { cause: withAssetNames(now.error ?? null) },
       )
     return jsonError(c, 409, `Session is ${now?.status ?? 'gone'}`)
   }
@@ -208,7 +210,7 @@ async function commitRoute(c: Context<AppEnv>, session: SessionRow) {
     }
     await settleSession(ports, session.id, failed).catch(() => false)
     const now = await getSession(ports, session.id)
-    if (now?.status === 'committed') return c.json(now.result ?? {}, 201)
+    if (now?.status === 'committed') return c.json(withAssetNames(now.result ?? {}), 201)
     return c.json(failed.body, 500)
   }
   return c.json(outcome.body, outcome.status)
@@ -285,8 +287,8 @@ async function statusBody(ports: Ports, s: SessionRow) {
     // one's key range leaves records scattered across packs (layout F).
     in_key_order: s.inKeyOrder,
     overlapping_uploads: s.overlappingUploads,
-    result: s.result ?? null,
-    error: s.error ?? null,
+    result: withAssetNames(s.result ?? null),
+    error: withAssetNames(s.error ?? null),
     // Where the commit last was, and the last error a step threw (push/trace.ts): kept
     // after the session settles, so a failed or stalled commit says where it stopped.
     commit_step: s.commitStep,
@@ -395,7 +397,10 @@ export function pushRoutes() {
         : patch
           ? { ...(base.metadata ?? {}), ...patch }
           : base.metadata
-    const files = (body.files ?? {}) as { add?: unknown; remove?: unknown }
+    // The assets the version keeps: "assets", or "files" as clients first sent it.
+    if (body.assets !== undefined && body.files !== undefined)
+      return jsonError(c, 400, 'Send "assets" or "files", not both')
+    const files = (body.assets ?? body.files ?? {}) as { add?: unknown; remove?: unknown }
     const hexList = (v: unknown) =>
       Array.isArray(v)
         ? v.filter((h): h is string => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h))
@@ -421,15 +426,17 @@ export function pushRoutes() {
       },
       inputs,
     )
+    const needed = await neededFiles(
+      c,
+      access,
+      head?.hash ?? null,
+      inputs.files && 'add' in inputs.files ? inputs.files.add : [],
+    )
     return c.json({
       session_id: session.id,
       base: head?.semver ?? null,
-      needed_files: await neededFiles(
-        c,
-        access,
-        head?.hash ?? null,
-        inputs.files && 'add' in inputs.files ? inputs.files.add : [],
-      ),
+      needed_files: needed,
+      needed_assets: needed,
       expires_at: session.expiresAt,
       in_key_order: session.inKeyOrder,
       limits: pushLimits(session),

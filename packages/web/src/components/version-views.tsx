@@ -7,8 +7,8 @@ import { RECORDS_PAGE_SIZE, type RecordsPage } from '~/lib/records-page'
 import { TokenLink, useShareToken, withToken } from '~/lib/share-token'
 
 /**
- * The version-scoped content views (records, files, overview), shared by the
- * latest-context routes (/:owner/:collection/records, /files) and the pinned
+ * The version-scoped content views (records, assets, overview), shared by the
+ * latest-context routes (/:owner/:collection/records, /assets) and the pinned
  * routes (/:owner/:collection/v/:n/...). Each takes the loaded version object
  * plus the page's own path (`basePath`) so pagination and type links stay on
  * whichever route is rendering.
@@ -39,7 +39,7 @@ export function VersionInfoBar({
           </span>
           <span>
             <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong>{' '}
-            {version.fileCount === 1 ? 'file' : 'files'}
+            {version.fileCount === 1 ? 'asset' : 'assets'}
           </span>
           <span>
             <strong className="text-ink">{formatBytes(version.totalBytes)}</strong> total
@@ -278,16 +278,16 @@ export function RecordsView({
                         if (ref?.attached) {
                           const hash = ref.hash
                           // Route through the API so access is checked and
-                          // a presigned URL is minted (files are private).
-                          const fileUrl = withToken(
-                            `/api/collections/${owner}/${collection}/files/${hash}`,
+                          // a presigned URL is minted (assets are private).
+                          const assetUrl = withToken(
+                            `/api/collections/${owner}/${collection}/assets/${hash}`,
                             shareToken,
                           )
-                          const label = f === 'pdf' ? 'PDF' : 'File'
+                          const label = f === 'pdf' ? 'PDF' : 'Asset'
                           return (
                             <td key={f} className="border-rule border-b p-2">
                               <a
-                                href={fileUrl}
+                                href={assetUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-link inline-flex items-center gap-1 hover:underline"
@@ -446,7 +446,7 @@ function schemaColumns(schema: any): string[] {
   return [...new Set([...listed, ...props.sort()])]
 }
 
-export function FilesView({
+export function AssetsView({
   owner,
   collection,
   version,
@@ -459,25 +459,25 @@ export function FilesView({
   recordsPath: string
 }) {
   const shareToken = useShareToken()
-  const [files, setFiles] = useState<any[]>([])
-  const [filesLoading, setFilesLoading] = useState(false)
+  const [assets, setAssets] = useState<any[]>([])
+  const [assetsLoading, setAssetsLoading] = useState(false)
   const semver = version.semver as string
 
   useEffect(() => {
-    setFilesLoading(true)
+    setAssetsLoading(true)
     fetch(
-      withToken(`/api/collections/${owner}/${collection}/versions/${semver}/files`, shareToken),
+      withToken(`/api/collections/${owner}/${collection}/versions/${semver}/assets`, shareToken),
       { credentials: 'include' },
     )
       .then((r) => (r.ok ? r.json() : []))
-      .then(setFiles)
-      .finally(() => setFilesLoading(false))
+      .then(setAssets)
+      .finally(() => setAssetsLoading(false))
   }, [owner, collection, semver, shareToken])
 
-  if (files.length === 0) {
+  if (assets.length === 0) {
     return (
       <p className="text-ink-muted py-8 text-center text-sm">
-        {filesLoading ? 'Loading files…' : 'No files in this version.'}
+        {assetsLoading ? 'Loading assets…' : 'No assets in this version.'}
       </p>
     )
   }
@@ -485,21 +485,21 @@ export function FilesView({
   return (
     <div>
       <p className="text-ink-muted mb-3 text-xs">
-        {files.length} file{files.length !== 1 ? 's' : ''} ·{' '}
-        {formatBytes(files.reduce((sum: number, f: any) => sum + (f.size ?? 0), 0))} total
+        {assets.length} asset{assets.length !== 1 ? 's' : ''} ·{' '}
+        {formatBytes(assets.reduce((sum: number, f: any) => sum + (f.size ?? 0), 0))} total
       </p>
       <div className="border-rule rounded-surface overflow-x-auto border">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-parchment-dark border-rule border-b">
-              <th className="p-2.5 text-left font-medium">File</th>
+              <th className="p-2.5 text-left font-medium">Asset</th>
               <th className="p-2.5 text-left font-medium">Referenced by</th>
               <th className="p-2.5 text-right font-medium">Size</th>
               <th className="p-2.5 text-right font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {files.map((f: any) => {
+            {assets.map((f: any) => {
               const refs: any[] = f.references ?? []
               const isPdf = f.mimeType === 'application/pdf'
               const isImage = f.mimeType?.startsWith('image/')
@@ -582,7 +582,7 @@ export function FilesView({
                         )}
                       </div>
                     ) : f.referenceCount > 0 ? (
-                      // v2 counts a file's references but doesn't list the records.
+                      // v2 counts an asset's references but doesn't list the records.
                       <span className="text-ink-muted">
                         {f.referenceCount.toLocaleString('en-US')} record
                         {f.referenceCount === 1 ? '' : 's'}
@@ -595,7 +595,7 @@ export function FilesView({
                   <td className="p-2.5 text-right">
                     <a
                       href={withToken(
-                        `/api/collections/${owner}/${collection}/files/${f.hash}`,
+                        `/api/collections/${owner}/${collection}/assets/${f.hash}`,
                         shareToken,
                       )}
                       target="_blank"

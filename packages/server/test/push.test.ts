@@ -192,6 +192,7 @@ describe('delta push', () => {
       session_idle_seconds: 43_200,
       open_sessions: 20,
       file_bytes: 32 * 1024 * 1024,
+      asset_bytes: 32 * 1024 * 1024,
     })
     let sid = opened.session_id
     res = await h.request(`${base}/push/${sid}/records`, {

@@ -25,6 +25,7 @@ import { versionSummary, withPusherNames } from '../api/collections.js'
 import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
+import { assetList } from '../lib/asset-names.js'
 import { deniedHashes } from '../lib/limits.js'
 import { previewRecord } from '../lib/preview.js'
 import { pullStream } from '../lib/streams.js'
@@ -503,7 +504,7 @@ export async function v3Diff(
   const rest = JSON.stringify({
     removed,
     pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
-    meta,
+    meta: { ...meta, assetsAdded: meta.filesAdded, assetsRemoved: meta.filesRemoved },
   })
   const head = JSON.stringify({ from: fromSemver, to: v.row.semver })
   return c.body(
@@ -572,10 +573,10 @@ export async function v3Manifest(
   )
   const fileList = async () => {
     if (q.cursor) return {}
-    const listed = [...(await assetsOf(store, v.view, cached)).keys()].sort(compareUtf8)
-    return listed.length > q.maxFiles
-      ? { files: listed.slice(0, q.maxFiles), filesTruncated: true }
-      : { files: listed }
+    return assetList(
+      [...(await assetsOf(store, v.view, cached)).keys()].sort(compareUtf8),
+      q.maxFiles,
+    )
   }
   const after = q.cursor ? { type: q.cursor.t, id: q.cursor.k } : null
   let next: string | null = null
@@ -620,6 +621,7 @@ export async function v3Manifest(
       schemas,
       delta,
       files: [],
+      assets: [],
       ...(await fileList()),
       pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
     })
@@ -640,6 +642,7 @@ export async function v3Manifest(
     schemas,
     records,
     files: [],
+    assets: [],
     ...(await fileList()),
     pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
   })

@@ -25,7 +25,7 @@ export const KEEP_MARK: Record<Keep, string> = { all: ' ', records: '◐', some:
 /** Each level in words. */
 export const KEEP_LABEL: Record<Keep, string> = {
   all: 'everything',
-  records: 'data, no files',
+  records: 'data, no assets',
   some: 'some types',
   none: 'metadata only',
 }
@@ -291,7 +291,7 @@ export async function wouldLetGo(
   return out
 }
 
-/** Keep only a collection's metadata here: its files go, unless something else names them. */
+/** Keep only a collection's metadata here: its record files go, unless something else names them. */
 export async function forget(ctx: Ctx, c: Coll): Promise<number> {
   ctx.home.writeCollection({ ...c.meta, keep: 'none', types: [] })
   if ((await v3.headNumber(c.store.fs, cidOf(c))) === 0) return 0

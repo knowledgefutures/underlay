@@ -352,7 +352,7 @@ export function createApp(setup: Setup) {
   app.route('/', arkRoutes())
   // Agent links (web's share panel): a page, budgeted as one above.
   app.route('/', agentRoutes())
-  // Before the :owner/:slug routes: /api/collections/files/:hash would match them.
+  // Before the :owner/:slug routes: /api/collections/assets/:hash (and files/:hash) would match them.
   app.route('/', recordRoutes())
   app.route('/', linkRoutes())
   app.route('/api/collections', fileRoutes())

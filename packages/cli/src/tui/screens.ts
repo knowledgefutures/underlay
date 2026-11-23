@@ -225,7 +225,7 @@ export function sidebar(
 
 // --- A collection ---
 
-export const TABS = ['Overview', 'Records', 'Schemas', 'Files', 'Versions'] as const
+export const TABS = ['Overview', 'Records', 'Schemas', 'Assets', 'Versions'] as const
 export type Tab = (typeof TABS)[number]
 
 function tabLine(tab: Tab): Line {
@@ -251,7 +251,7 @@ export interface CollectionExtra {
   /** The selected record in Records, and whether it is open. */
   rCursor?: number
   recordOpen?: boolean
-  /** The selected file in Files. */
+  /** The selected asset in Assets. */
   fCursor?: number
   /** Whether handoff.send is set, so A sends the prompt. */
   handoff?: boolean
@@ -355,7 +355,7 @@ export function collectionPane(
           S(
             `${KEEP_LABEL[m.keep]} · ${count(d.records)} records · ${bytes(d.bytes)}${
               d.assets?.length
-                ? ` · ${count(d.assets.length)} files, ${count(d.assets.filter((f) => f.here).length)} here`
+                ? ` · ${count(d.assets.length)} assets, ${count(d.assets.filter((f) => f.here).length)} here`
                 : ''
             }`,
           ),
@@ -440,13 +440,13 @@ export function collectionPane(
         ),
       ]),
     )
-    lines.push(L([S(`    its records and files are in ${x.storeRoot} (the store)`, C.mu)]))
+    lines.push(L([S(`    its records and assets are in ${x.storeRoot} (the store)`, C.mu)]))
   } else if (tab === 'Records') {
     const rs = x.records ?? []
     const at = Math.min(x.rCursor ?? 0, Math.max(0, rs.length - 1))
     const open = x.recordOpen ? rs[at] : undefined
     if (open) {
-      // One record, whole: each field on its own line, the files it points to marked.
+      // One record, whole: each field on its own line, the assets it attaches marked.
       let data: unknown = open.data
       try {
         data = JSON.parse(open.data)
@@ -503,17 +503,17 @@ export function collectionPane(
     }
     if (!Object.keys(d.schemas).length)
       lines.push(L([S(`No schemas: put them in collections/${row.key}/schemas/<Type>.json`, C.mu)]))
-  } else if (tab === 'Files') {
-    // Assets: the files the records point to, such as PDFs and images, as on the web.
+  } else if (tab === 'Assets') {
+    // The assets the records attach, such as PDFs and images, as on the web.
     const a = d.assets
     if (a === null)
       lines.push(
-        L([S('Its records are not here, so neither is its list of files. k keeps more.', C.mu)]),
+        L([S('Its records are not here, so neither is its list of assets. k keeps more.', C.mu)]),
       )
     else if (a.length === 0)
       lines.push(
         L([
-          S('No files. ', C.fg),
+          S('No assets. ', C.fg),
           S(`underlay asset add ${local ? m.name : `${m.org}/${m.name}`} <file> adds one.`, C.mu),
         ]),
       )
@@ -521,7 +521,7 @@ export function collectionPane(
       const here = a.filter((f) => f.here)
       lines.push(
         L([
-          S(`${count(a.length)} file${a.length === 1 ? '' : 's'}`, C.fg, true),
+          S(`${count(a.length)} asset${a.length === 1 ? '' : 's'}`, C.fg, true),
           S(
             ` · ${bytes(a.reduce((n, f) => n + f.size, 0))} · ${here.length === a.length ? 'all here' : `${count(here.length)} here`}`,
             C.mu,
@@ -537,7 +537,7 @@ export function collectionPane(
         const on = i === at
         lines.push(
           withAct(
-            `file:${i}`,
+            `asset:${i}`,
             L(
               [
                 S(on ? '▌' : ' ', C.bl),
@@ -553,7 +553,7 @@ export function collectionPane(
         )
       })
       acts.push({ k: 'enter', l: 'open it' }, { k: 'w', l: 'save a copy to Downloads' })
-      pane.keys = [{ k: '↑↓', l: 'file' }, ...pane.keys]
+      pane.keys = [{ k: '↑↓', l: 'asset' }, ...pane.keys]
     }
     lines.push(
       blank(),
@@ -719,7 +719,7 @@ export function donePane(r: RunRecord, log: string[], width: number): Pane {
       if (s.files)
         lines.push(
           L([
-            S('    files  ', C.mu),
+            S('    assets  ', C.mu),
             S(
               [
                 s.files.added ? `${count(s.files.added)} new (${bytes(s.files.bytes)})` : '',
@@ -935,8 +935,10 @@ function peckLines(v: PushView): Line[] {
       S('░'.repeat(w - filled), C.dim),
       S(
         p.done < p.total
-          ? `  ${p.done} of ${p.total} files`
-          : `  ${p.total} files sent; committing`,
+          ? `  ${p.done} of ${p.total} ${p.assets ? 'assets' : 'files'}`
+          : p.assets
+            ? `  ${p.total} assets sent`
+            : `  ${p.total} files sent; committing`,
         C.mu,
       ),
     ]),
@@ -1035,10 +1037,13 @@ export function pushPane(v: PushView, user: string | null, width: number): Pane 
   })
   lines.push(blank(), head('COPIED EXACTLY AS THEY ARE HERE: SAME NUMBERS, SAME CONTENTS'))
   for (const p of inc)
-    if (p.files)
+    if (p.assets)
       lines.push(
         L([
-          S(`  ${p.coll.meta.name}: ${p.files} file${p.files === 1 ? '' : 's'} sent first`, C.mu),
+          S(
+            `  ${p.coll.meta.name}: ${p.assets} asset${p.assets === 1 ? '' : 's'} sent first`,
+            C.mu,
+          ),
         ]),
       )
   for (const p of inc)

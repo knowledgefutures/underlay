@@ -57,6 +57,7 @@ export function versionSummary(
     ...(owner ? { pushedBy: v.pushedBy, actorId: v.actorId } : {}),
     recordCount: owner ? v.recordCount : v.publicRecordCount,
     fileCount: owner ? v.fileCount : v.publicFileCount,
+    assetCount: owner ? v.fileCount : v.publicFileCount,
     totalBytes: owner ? v.totalBytes : v.publicTotalBytes,
     typeCounts: owner ? v.typeCounts : v.publicTypeCounts,
     createdAt: v.createdAt,
@@ -218,6 +219,7 @@ export function collectionRoutes() {
         protocol: r.c.recordLayout === 'v3' ? 3 : 2,
         recordCount: v?.recordCount ?? null,
         fileCount: v?.fileCount ?? null,
+        assetCount: v?.assetCount ?? null,
         totalBytes: v?.totalBytes ?? null,
         lastPushAt: v?.createdAt ?? null,
       }

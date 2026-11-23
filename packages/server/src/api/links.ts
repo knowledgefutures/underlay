@@ -66,7 +66,7 @@ export function linkRoutes() {
       return answer(`${page}/v/${bare(v.semver)}`)
     }
     if (to.kind === 'asset')
-      return answer(`/api/collections/${ID_OWNER}/${seg(access.collection.id)}/files/${to.hash}`)
+      return answer(`/api/collections/${ID_OWNER}/${seg(access.collection.id)}/assets/${to.hash}`)
     if (type && id)
       return answer(`${page}/v/latest/records/${seg(type)}/${seg(id)}?hash=${to.hash}`)
     return answer(`/records/${to.hash}`)

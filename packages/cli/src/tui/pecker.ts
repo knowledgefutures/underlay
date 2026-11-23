@@ -1,6 +1,6 @@
 /**
- * The woodpecker beside a push or pull in a plain terminal: it pecks while files go up or come
- * down, with a bar of how many. It is drawn under the lines the command prints and redrawn in
+ * The woodpecker beside a push or pull in a plain terminal: it pecks while record files and
+ * assets go up or come down, with a bar of how many. It is drawn under the lines the command prints and redrawn in
  * place; it shows only once the work has taken most of a second, so quick pushes print as they
  * always did, and it is gone when the work is done.
  */
@@ -82,6 +82,7 @@ export class Pecker {
       p.direction === 'up'
         ? `Pushing ${p.key} to ${p.authority}`
         : `Pulling ${p.key} from ${p.authority}`
+    const noun = p.assets ? 'assets' : 'files'
     const text = [
       '',
       `\x1b[1m${what}\x1b[0m`,
@@ -89,10 +90,10 @@ export class Pecker {
       '',
       `\x1b[32m${'█'.repeat(filled)}\x1b[0m\x1b[2m${'░'.repeat(BAR - filled)}\x1b[0m  ` +
         (p.done < p.total || !p.total
-          ? `${p.done} of ${p.total} files`
+          ? `${p.done} of ${p.total} ${noun}`
           : p.direction === 'up'
-            ? `${p.total} files sent; committing`
-            : `${p.total} files`),
+            ? `${p.total} ${noun} sent${p.assets ? '' : '; committing'}`
+            : `${p.total} ${noun}`),
     ]
     const w = BIRD.M[0].length
     const lines = bird.map((b, i) => {

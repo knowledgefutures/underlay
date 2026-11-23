@@ -183,10 +183,10 @@ export default function CollectionDiffPage() {
               {meta.schemaChanged && <span className="text-purple-700">schema</span>}
               {meta.readmeChanged && <span className="text-blue-700">readme</span>}
               {meta.filesAdded > 0 && (
-                <span className="text-green-700">+{meta.filesAdded} files</span>
+                <span className="text-green-700">+{meta.filesAdded} assets</span>
               )}
               {meta.filesRemoved > 0 && (
-                <span className="text-red-700">-{meta.filesRemoved} files</span>
+                <span className="text-red-700">-{meta.filesRemoved} assets</span>
               )}
             </div>
 
@@ -222,13 +222,13 @@ export default function CollectionDiffPage() {
                       )}
                       {meta.filesAdded > 0 && (
                         <tr className="border-rule border-b">
-                          <td className="text-ink-muted w-32 p-3 font-medium">Files added</td>
+                          <td className="text-ink-muted w-32 p-3 font-medium">Assets added</td>
                           <td className="p-3 text-green-700">+{meta.filesAdded}</td>
                         </tr>
                       )}
                       {meta.filesRemoved > 0 && (
                         <tr className="border-rule border-b last:border-b-0">
-                          <td className="text-ink-muted w-32 p-3 font-medium">Files removed</td>
+                          <td className="text-ink-muted w-32 p-3 font-medium">Assets removed</td>
                           <td className="p-3 text-red-700">-{meta.filesRemoved}</td>
                         </tr>
                       )}

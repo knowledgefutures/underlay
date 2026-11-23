@@ -3,10 +3,11 @@
  *
  * Pull follows the authority's log: its new commits go into the store's log as they are,
  * with their receipts, and any versions not yet pushed are built again on top of them
- * (renumbered, with new ids, their change ids kept). Then the files of what is kept.
+ * (renumbered, with new ids, their change ids kept). Then the record files and assets of what
+ * is kept.
  *
- * Push copies each version not yet pushed to the authority, in order, unchanged: its files
- * through an upload, then the commit as built here. The authority stores it as it is, so
+ * Push sends the assets its versions name first, then copies each version not yet pushed to
+ * the authority, in order, unchanged: its record files through an upload, then the commit as built here. The authority stores it as it is, so
  * the version has the same id there, and signs a receipt. If someone pushed first, the
  * authority refuses with its newest version: pull, replay, renumber, and say so.
  */
@@ -35,8 +36,10 @@ export interface FileProgress {
   key: string
   authority: string
   direction: 'up' | 'down'
-  /** The version being pushed; null for a pull. */
+  /** The version being pushed; null for a pull, and for assets. */
   semver: string | null
+  /** Assets (PDFs, images) rather than record files. */
+  assets?: boolean
   done: number
   total: number
 }
@@ -156,7 +159,7 @@ export async function pull(
   return result
 }
 
-/** Fetch the files of the newest version that the collection keeps; how many were fetched. */
+/** Fetch the record files of the newest version that the collection keeps; how many were fetched. */
 export async function fetchKept(c: Coll, onFile?: OnFile): Promise<number> {
   if (c.meta.keep === 'none' || c.meta.isNew) return 0
   if ((await v3.headNumber(c.store.fs, cidOf(c))) === 0) return 0
@@ -211,8 +214,8 @@ export interface PushPlan {
   from: { number: number; semver: string } | null
   versions: PushVersion[]
   removed: number
-  /** Files (assets) its versions name that the authority's newest doesn't: sent first. */
-  files: number
+  /** Assets its versions name that the authority's newest doesn't: sent first. */
+  assets: number
 }
 
 /** What a push would copy, for the confirmation. None for a local collection: it has no server. */
@@ -238,7 +241,7 @@ export async function pushPlan(c: Coll): Promise<PushPlan | null> {
     from: state.remote ? { number: state.remote.number, semver: state.remote.semver } : null,
     versions,
     removed: versions.reduce((n, v) => n + (v.stats?.removed ?? 0), 0),
-    files: (await unpushedAssets(c)).length,
+    assets: (await unpushedAssets(c)).length,
   }
 }
 
@@ -334,11 +337,13 @@ export async function push(
     for (const f of toSend) {
       const obj = await c.data.get(v3.recordKey(f.id))
       if (!obj)
-        throw new CliError(`${c.key}: file ${f.id} of version ${s.commit.number} is missing here`)
+        throw new CliError(
+          `${c.key}: record file ${f.id} of version ${s.commit.number} is missing here`,
+        )
       await remote.sendFile(org, name, up.upload_id, f.id, await obj.bytes())
       tell(++sent)
     }
-    say(`  ${s.commit.semver}: sent ${sent} of ${files.length} files; committing`)
+    say(`  ${s.commit.semver}: sent ${sent} of ${files.length} record files; committing`)
     const st = await remote.commitUpload(org, name, up.upload_id, {
       files,
       commit: new TextDecoder().decode(s.bytes),

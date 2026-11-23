@@ -1,8 +1,8 @@
 # Underlay protocol, version 3 (draft)
 
 **Status:** Draft, 2026-11-12; authority, author-built commits, receipts, and the routes a client follows a collection by, added 2026-11-16 (Sections 4.6 to 4.8); Underlay ids, links, and bare-hex
-versions inside commits added 2026-11-18 (Sections 2.1, 2.2, and 4); a file's id is `ul:file:`
-(was `ul:asset:`) from 2026-11-22. Not stable. Implemented in
+versions inside commits added 2026-11-18 (Sections 2.1, 2.2, and 4); asset references
+(`$asset`) added 2026-11-22 (Section 2.3). Not stable. Implemented in
 `packages/protocol/src/v3/`, with ids and links in `packages/protocol/src/ids.ts` and
 `links.ts`. Where this document and the code disagree while both are drafts, fix whichever is
 wrong and say so in the commit. Test vectors for files, commits, ids, and links are in
@@ -28,8 +28,9 @@ Records, canonical JSON, input rules, key order, and schemas are those of versio
 - **Rebuild:** writing new sorted-record-files that hold the rows of older ones.
 - **Layout file:** a numbered object, written by a rebuild, listing the sorted-record-files that
   hold everything through a commit.
-- **Asset:** a byte string named by its SHA-256. The API, the site, and its Underlay id
-  (`ul:file:`) call it a file.
+- **Asset:** a byte string named by its SHA-256, held by a collection beside its records: a
+  PDF, an image, a dataset's attachments. Records attach assets with `$asset` references (2.3),
+  and a collection's `$asset` rows say which it holds (4.3).
 
 ## 2. Lines
 
@@ -63,11 +64,11 @@ member is refused: there is no `private`.
 ### 2.1 Underlay ids
 
 Outside the protocol's own objects (in record data, URLs, API responses, and citations), a record,
-a file (an asset), or a version is named by an **Underlay id**:
+an asset, or a version is named by an **Underlay id**:
 
 ```
 ul:rec:<hex>      a record: the hash of its line (Section 2)
-ul:file:<hex>     a file (an asset): the SHA-256 of its bytes
+ul:asset:<hex>    an asset: the SHA-256 of its bytes
 ul:ver:<hex>      a version: its version id (Section 4)
 ```
 
@@ -87,18 +88,18 @@ a search) as a `ul:` id or as bare hex, and MAY take the older forms `sha256:<he
 
 ### 2.2 Links
 
-A record points at another record, a file, or a version with a **link**: an object, at any
+A record points at another record, an asset, or a version with a **link**: an object, at any
 depth of its `data`, with a `$link` member. The id's prefix says what the link points at:
 
-| Target    | `$link`         | Members that say where it is |
-| --------- | --------------- | ---------------------------- |
-| a record  | `ul:rec:<hex>`  | `collection`, `type`, `id`   |
-| a file    | `ul:file:<hex>` | `collection`                 |
-| a version | `ul:ver:<hex>`  | `collection`                 |
+| Target    | `$link`          | Members that say where it is |
+| --------- | ---------------- | ---------------------------- |
+| a record  | `ul:rec:<hex>`   | `collection`, `type`, `id`   |
+| an asset  | `ul:asset:<hex>` | `collection`                 |
+| a version | `ul:ver:<hex>`   | `collection`                 |
 
 ```
 {"$link": "ul:rec:<hex>", "collection": collection id, "type": string, "id": string}
-{"$link": "ul:file:<hex>", "collection": collection id}
+{"$link": "ul:asset:<hex>", "collection": collection id}
 {"$link": "ul:ver:<hex>", "collection": collection id}
 ```
 
@@ -115,14 +116,36 @@ depth of its `data`, with a `$link` member. The id's prefix says what the link p
 - A server MUST NOT refuse a link because of its target: it may be private, held elsewhere,
   taken down, or never published. A link is a claim made by the record that holds it. Its hash
   says which content it points at, not that the record came from there.
-- A link to a file does not make a collection hold it; `$asset` rows do (4.3).
-
-v2's file reference, `{"$file": "sha256:<hex>"}` (v2 Section 4), is read as a link to
-`ul:file:<hex>`. It is not checked: as in v2, a `$file` with any other value is not a reference.
+- A link to an asset only points at it, wherever it is. Attaching it to the record's
+  collection is what an asset reference does (2.3).
 
 Informative: what a server builds from links (an index of what points at a record, a graph of
 where data came from) is not part of this protocol. Because a link names its target by hash, a
 record cannot link to itself through a chain of links, so following links always ends.
+
+### 2.3 Asset references
+
+A record **attaches** an asset with an **asset reference**: an object, at any depth of its
+`data`, with a `$asset` member whose value is the asset's Underlay id.
+
+```
+{"cover": {"$asset": "ul:asset:<hex>", "fileName": "cover.png", "mediaType": "image/png"}}
+```
+
+- Any other member is the publisher's (a file name, a media type, where the bytes came from).
+- An asset reference is read as a link to its asset (2.2). It is not searched for links or
+  further references.
+- A server MUST refuse a record whose data has an object with a `$asset` member whose value is
+  not a `ul:asset:` id, or with both `$link` and `$asset`. A pasted hash is refused, not stored
+  as data that looks like a reference.
+- The collection must hold what its records attach. A server that builds a commit from records
+  adds a `$asset` row for each attached asset the collection doesn't hold yet, and refuses the
+  change if that asset's bytes were never sent to the collection (4.3). A client that builds
+  its own commits SHOULD do the same.
+
+Records written before 2026-11-22 attach with `{"$file": "sha256:<hex>"}` (v2 Section 4). It is
+read the same way as `{"$asset": "ul:asset:<hex>"}`, and is not checked: as in v2, a `$file`
+with any other value is not a reference. New records SHOULD use `$asset`.
 
 ## 3. Sorted-record-file
 
@@ -622,14 +645,14 @@ sweep/                            the sweep's own state
 
 ## 10. Constants
 
-| Name                 | Value                |
-| -------------------- | -------------------- |
-| `RECORD_BLOCK_BYTES` | 262,144              |
-| `KEY_BLOCK_ENTRIES`  | 1,024                |
-| `MAX_FILE_ENTRIES`   | 1,048,576            |
-| Trailer magic        | `UL3SRF\n\0`         |
-| Version id prefix    | `ul:ver:`            |
-| Underlay id kinds    | `rec`, `file`, `ver` |
-| Number width in keys | 16 decimal digits    |
+| Name                 | Value                 |
+| -------------------- | --------------------- |
+| `RECORD_BLOCK_BYTES` | 262,144               |
+| `KEY_BLOCK_ENTRIES`  | 1,024                 |
+| `MAX_FILE_ENTRIES`   | 1,048,576             |
+| Trailer magic        | `UL3SRF\n\0`          |
+| Version id prefix    | `ul:ver:`             |
+| Underlay id kinds    | `rec`, `asset`, `ver` |
+| Number width in keys | 16 decimal digits     |
 
 Limits on ids, types, record size, depth, and schemas are v2's (Section 12).

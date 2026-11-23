@@ -298,7 +298,7 @@ export function App({
   const [scroll, setScroll] = useState(0)
   // The version selected in the Versions tab, newest first.
   const [vCursor, setVCursor] = useState(0)
-  // The record and file selected in Records and Files, whether the record is open, and how far
+  // The record and asset selected in Records and Assets, whether the record is open, and how far
   // a pane of text (Overview, Schemas, a record) is scrolled; how far it can go is drawn below.
   const [rCursor, setRCursor] = useState(0)
   const [fCursor, setFCursor] = useState(0)
@@ -948,23 +948,23 @@ export function App({
     if (tab === 'Versions') return setVCursor((i) => to(i + delta, (d?.versions.length ?? 1) - 1))
     if (tab === 'Records' && !recordOpen)
       return setRCursor((i) => to(i + delta, (records?.length ?? 1) - 1))
-    if (tab === 'Files') return setFCursor((i) => to(i + delta, (d?.assets?.length ?? 1) - 1))
+    if (tab === 'Assets') return setFCursor((i) => to(i + delta, (d?.assets?.length ?? 1) - 1))
     setPScroll((x) => to(x + delta, paneMax.current))
   }
 
-  /** A file, opened in the app the system gives its type; fetched for this if it isn't here. */
+  /** An asset, opened in the app the system gives its type; fetched for this if it isn't here. */
   const openAsset = (c: Coll, f: AssetRow) =>
     attempt(`Opening ${f.hash.slice(0, 12)}`, async () => {
       const { bytes: b, fetched } = await assetBytes(c, f.hash)
-      const dir = join(tmpdir(), 'underlay-files')
+      const dir = join(tmpdir(), 'underlay-assets')
       mkdirSync(dir, { recursive: true })
       const path = join(dir, `${f.hash.slice(0, 12)}${extOf(f.mediaType)}`)
       writeFileSync(path, b)
       openInBrowser(path)
-      return `Opened ${f.hash.slice(0, 12)} (${bytes(f.size)})${fetched ? `: fetched for this, not kept here (k → everything keeps files)` : ''}`
+      return `Opened ${f.hash.slice(0, 12)} (${bytes(f.size)})${fetched ? `: fetched for this, not kept here (k → everything keeps assets)` : ''}`
     })
 
-  /** A copy of a file in Downloads, named for the record that points to it where there is one. */
+  /** A copy of an asset in Downloads, named for the record that attaches it where there is one. */
   const saveAsset = (c: Coll, f: AssetRow & { pointedBy?: string }) =>
     attempt(`Saving ${f.hash.slice(0, 12)}`, async () => {
       const { bytes: b } = await assetBytes(c, f.hash)
@@ -1757,7 +1757,7 @@ export function App({
       if (key.return && focus === 'side') return setFocus('main')
       if (key.return && tab === 'Records' && !recordOpen && records?.length)
         return (setRecordOpen(true), setPScroll(0))
-      const fileRow = tab === 'Files' ? detail?.d.assets?.[fCursor] : undefined
+      const fileRow = tab === 'Assets' ? detail?.d.assets?.[fCursor] : undefined
       if (fileRow && key.return) return void openAsset(c, fileRow)
       if (fileRow && input === 'w') return void saveAsset(c, fileRow)
       if (focus === 'main' && (key.leftArrow || key.rightArrow)) {
@@ -1801,7 +1801,7 @@ export function App({
         const now = collRow.meta.keep
         const levels: Record<string, Keep> = { e: 'all', d: 'records', m: 'none' }
         return setPrompt({
-          label: `Keep here: e everything, d data without files, m metadata only (now ${KEEP_LABEL[now]})`,
+          label: `Keep here: e everything, d data without assets, m metadata only (now ${KEEP_LABEL[now]})`,
           value: '',
           submit: async (v) => {
             const level = levels[v.trim().toLowerCase()]
@@ -1811,7 +1811,7 @@ export function App({
               void attempt(`Keeping ${KEEP_LABEL[level]}`, async () => {
                 const r = await setKeep(ctx, c, level)
                 void reload()
-                return `${collRow.meta.name}: ${KEEP_LABEL[level]}${r.fetched ? `, fetched ${r.fetched}` : ''}${r.letGo ? `, let go of ${r.letGo} files here` : ''}`
+                return `${collRow.meta.name}: ${KEEP_LABEL[level]}${r.fetched ? `, fetched ${r.fetched}` : ''}${r.letGo ? `, let go of ${r.letGo} record files and assets here` : ''}`
               })
             const w = await wouldLetGo(c, level)
             if (!w.records && !w.assets) return go()
@@ -1988,8 +1988,8 @@ export function App({
         setRCursor(Number(l.act.slice('record:'.length)))
         continue
       }
-      if (l.act?.startsWith('file:')) {
-        setFCursor(Number(l.act.slice('file:'.length)))
+      if (l.act?.startsWith('asset:')) {
+        setFCursor(Number(l.act.slice('asset:'.length)))
         continue
       }
       let x = g.pane.left + 2

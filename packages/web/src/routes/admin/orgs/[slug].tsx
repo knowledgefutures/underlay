@@ -145,7 +145,7 @@ export default function AdminOrg() {
     },
     {
       key: 'files',
-      label: 'Files',
+      label: 'Assets',
       numeric: true,
       sort: (c) => c.files,
       render: (c) => compact(c.files),
@@ -253,7 +253,7 @@ export default function AdminOrg() {
       <StatGrid>
         <StatTile label="API calls" value={compact(u.api_calls)} />
         <StatTile label="Egress" value={formatBytes(u.response_bytes + u.file_bytes)} />
-        <StatTile label="File downloads" value={compact(u.file_downloads)} />
+        <StatTile label="Asset downloads" value={compact(u.file_downloads)} />
       </StatGrid>
       <UsageChart daily={data.daily} />
 

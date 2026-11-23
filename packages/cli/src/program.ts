@@ -81,7 +81,7 @@ const json = (v: unknown) => say(JSON.stringify(v, null, 2))
 const keepOpt = () =>
   new Option(
     '--keep <keep>',
-    'how much to keep here: all (records and files), records (no files), some types, none (metadata)',
+    'how much to keep here: all (records and assets), records (no assets), some types, none (metadata)',
   ).choices(['all', 'records', 'some', 'none'])
 const kindLabel = (s: ScriptInfo) =>
   s.kind === 'script' ? '' : s.kind === 'view' ? (s.view === 'server' ? 'serves' : 'view') : s.kind
@@ -447,7 +447,7 @@ program
       })
       const head = await v3.findHead(added.store.fs, cidOf(added))
       say(
-        `${KEEP_MARK[added.meta.keep]} ${added.key}: ${head ? head.commit.semver : 'no versions'}, ${pulled.fetched} versions, ${pulled.files} files fetched`,
+        `${KEEP_MARK[added.meta.keep]} ${added.key}: ${head ? head.commit.semver : 'no versions'}, ${pulled.fetched} versions, ${pulled.files} record files fetched${pulled.assets ? `, ${pulled.assets} assets` : ''}`,
       )
     }
   })
@@ -514,11 +514,9 @@ program
   )
 program
   .command('keep')
-  .description(
-    'Keep all of a collection here, records and files (assets), fetching what is missing',
-  )
+  .description('Keep all of a collection here, records and assets, fetching what is missing')
   .argument('<collection>')
-  .option('--records', 'its records but not its files: lets go of files here')
+  .option('--records', 'its records but not its assets: lets go of assets here')
   .option('--types <types>', 'only these types’ records', list)
   .action(async (name: string, o: { types?: string[]; records?: boolean }) => {
     const level = o.types?.length ? 'some' : o.records ? 'records' : 'all'
@@ -529,19 +527,19 @@ program
   })
 program
   .command('forget')
-  .description('Keep only metadata here; records and files go unless something else needs them')
+  .description('Keep only metadata here; records and assets go unless something else needs them')
   .argument('<collection>')
   .action(async (name: string) => {
     const r = await setKeep(ctx(), coll(ctx(), name), 'none')
-    say(`Let go of ${r.letGo} files`)
+    say(`Let go of ${r.letGo} record files and assets`)
   })
 
 const asset = program
   .command('asset')
-  .description('A collection’s files (assets): PDFs, images, and the like that records point to')
+  .description('A collection’s assets: PDFs, images, and the like that records attach')
 asset
   .command('ls', { isDefault: true })
-  .description('The files the newest version names, and which are here')
+  .description('The assets the newest version names, and which are here')
   .argument('<collection>')
   .action(async (name: string) => {
     const c = coll(ctx(), name)
@@ -553,13 +551,13 @@ asset
       )
     say(
       rows.length
-        ? `${rows.length} files, ${here.size} here${c.meta.keep === 'all' ? '' : ` (underlay keep ${c.key} fetches them)`}`
-        : 'No files',
+        ? `${rows.length} assets, ${here.size} here${c.meta.keep === 'all' ? '' : ` (underlay keep ${c.key} fetches them)`}`
+        : 'No assets',
     )
   })
 asset
   .command('add')
-  .description('Add files to a collection: a version that names them, sent on push')
+  .description('Add files to a collection as assets: a version that names them, sent on push')
   .argument('<collection>')
   .argument('<files...>')
   .option('-m, --message <message>')
@@ -578,7 +576,7 @@ asset
     for (const a of stored) say(`${a.hash}  ${a.from}`)
     say(
       r.version
-        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${r.stats.files} files added`
+        ? `${cl.key}: ${r.version.commit.semver} · not pushed · ${r.stats.assets} assets added`
         : `${cl.key}: it names these already`,
     )
   })
@@ -700,10 +698,10 @@ program
     }
   })
 
-/** A saved version's files, for a run's summary: "  files 38 new (61.4 MB), 2 already here". */
-const filesNote = (s: SavedVersion) =>
+/** A saved version's assets, for a run's summary: "  assets 38 new (61.4 MB), 2 already here". */
+const assetsNote = (s: SavedVersion) =>
   s.files
-    ? `\n    files  ${[
+    ? `\n    assets  ${[
         s.files.added ? `${count(s.files.added)} new (${bytes(s.files.bytes)})` : '',
         s.files.here ? `${count(s.files.here)} already here` : '',
       ]
@@ -812,7 +810,7 @@ program
       )
       for (const s of r.saved)
         say(
-          `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}${filesNote(s)}`,
+          `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}${assetsNote(s)}`,
         )
       for (const u of r.unchanged) say(`  ${u}  no changes`)
       if (r.git)
@@ -1112,7 +1110,7 @@ program
     })
     for (const s of r.saved)
       say(
-        `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}${filesNote(s)}`,
+        `  ${s.collection}  ${s.semver} · ${shortId(s.id)} · not pushed   +${count(s.added)} ~${count(s.changed)} -${count(s.removed)}${assetsNote(s)}`,
       )
     for (const u of r.unchanged) say(`  ${u}  no changes`)
     if (r.status !== 'ok') {

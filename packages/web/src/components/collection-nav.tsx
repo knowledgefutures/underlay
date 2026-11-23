@@ -105,9 +105,9 @@ function VersionPicker({
 /**
  * Collection header, two rows:
  * - Top row is collection-wide: breadcrumb, visibility, Settings.
- * - Tab row is content: Overview / Records / Schemas / Files / Versions, with
+ * - Tab row is content: Overview / Records / Schemas / Assets / Versions, with
  *   the version picker on its right edge scoping the version-aware tabs
- *   (Overview, Records, Schemas, Files). Versions is the full history.
+ *   (Overview, Records, Schemas, Assets). Versions is the full history.
  *   On a phone the tabs scroll sideways under the picker's own row.
  */
 export function CollectionNav({
@@ -123,7 +123,7 @@ export function CollectionNav({
   collection: string
   isPublic?: boolean
   isOwner?: boolean
-  active: 'overview' | 'records' | 'schemas' | 'files' | 'versions'
+  active: 'overview' | 'records' | 'schemas' | 'assets' | 'versions'
   /** The version currently in context (defaults to latest). Absent on empty collections. */
   version?: string
   /** Whether the version in context is the latest ready version. */
@@ -153,8 +153,8 @@ export function CollectionNav({
       }
       case 'schemas':
         return `${target}/schemas`
-      case 'files':
-        return `${target}/files`
+      case 'assets':
+        return `${target}/assets`
       default:
         // overview, or a collection-level page like /versions
         return target
@@ -225,10 +225,10 @@ export function CollectionNav({
           </TokenLink>
           {version && (
             <TokenLink
-              to={`${prefix}/files`}
-              className={active === 'files' ? activeClass : inactiveClass}
+              to={`${prefix}/assets`}
+              className={active === 'assets' ? activeClass : inactiveClass}
             >
-              Files
+              Assets
             </TokenLink>
           )}
           <TokenLink

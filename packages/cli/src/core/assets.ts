@@ -70,6 +70,7 @@ export async function fetchAssets(c: Coll, onFile?: OnFile): Promise<number> {
       authority: c.meta.authority,
       direction: 'down',
       semver: null,
+      assets: true,
       done,
       total: need.length,
     })
@@ -114,7 +115,8 @@ export async function sendAssets(c: Coll, onFile?: OnFile): Promise<number> {
       key: c.key,
       authority: c.meta.authority,
       direction: 'up',
-      semver: 'assets',
+      semver: null,
+      assets: true,
       done: n,
       total: send.length,
     })
@@ -215,7 +217,7 @@ export function assetRefsIn(data: unknown, field = ''): { hash: string; field: s
   return out
 }
 
-/** The files a run wrote into `$UNDERLAY_OUT/files/` (any names, any folders), by SHA-256. */
+/** The files a run wrote into a folder of `$UNDERLAY_OUT` (any names, any folders), by SHA-256. */
 export function runFiles(
   dir: string,
 ): Map<string, { path: string; size: number; mediaType: string | null }> {
@@ -240,7 +242,7 @@ export const extOf = (mediaType: string | null) =>
   Object.entries(MEDIA).find(([, m]) => m === mediaType)?.[0] ?? ''
 
 /**
- * A file's bytes: from here when it is kept, else fetched from the authority (and not kept:
+ * An asset's bytes: from here when it is kept, else fetched from the authority (and not kept:
  * how much is kept is the collection's level, which this doesn't change).
  */
 export async function assetBytes(
@@ -249,12 +251,12 @@ export async function assetBytes(
 ): Promise<{ bytes: Uint8Array; fetched: boolean }> {
   const obj = await c.store.fs.get(assetKey(hash))
   if (obj) return { bytes: await obj.bytes(), fetched: false }
-  if (c.meta.isNew) throw new CliError(`File ${hash.slice(0, 12)} is not here`)
+  if (c.meta.isNew) throw new CliError(`Asset ${hash.slice(0, 12)} is not here`)
   const remote = c.remote()
   const url = (await remote.assetUrls(c.meta.org, c.meta.name, [hash])).get(hash)
-  if (!url) throw new CliError(`${c.meta.authority} has no file ${hash.slice(0, 12)}`)
+  if (!url) throw new CliError(`${c.meta.authority} has no asset ${hash.slice(0, 12)}`)
   const bytes = await remote.fetchAsset(url)
   if (sha256(bytes) !== hash)
-    throw new CliError(`File ${hash.slice(0, 12)} came back with other bytes`)
+    throw new CliError(`Asset ${hash.slice(0, 12)} came back with other bytes`)
   return { bytes, fetched: true }
 }

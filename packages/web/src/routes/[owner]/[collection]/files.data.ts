@@ -1,23 +1,7 @@
-import type { LoaderFunctionArgs } from 'react-router'
+import { redirect, type LoaderFunctionArgs } from 'react-router'
 
-import { loaderApi } from '~/lib/fetch-base'
-
-export const handle = {
-  title: (params: Record<string, string>) =>
-    `Files — ${params.owner}/${params.collection} · Underlay`,
-}
-
-/** The latest-context files page: resolve the latest ready version, then load it. */
+/** Legacy route: the Files tab is now Assets. */
 export async function loader({ params, request }: LoaderFunctionArgs) {
-  const api = loaderApi(request, { share: true })
-  const prefix = `/api/collections/${params.owner}/${params.collection}`
-
-  // Both at once: `latest` resolves the head on the server (a 404 when there is none).
-  const [collectionData, version] = await Promise.all([
-    api.json(prefix, null),
-    api.json(`${prefix}/versions/latest`, null),
-  ])
-  if (!collectionData) throw new Response('Not Found', { status: 404 })
-
-  return { version, collectionData }
+  const url = new URL(request.url)
+  throw redirect(`/${params.owner}/${params.collection}/assets${url.search}`, 301)
 }

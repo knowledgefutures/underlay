@@ -86,7 +86,7 @@ export default function CollectionOverviewBody({
               </span>
               <span className="text-ink-muted">·</span>
               <span className="text-ink-muted">
-                {version.fileCount.toLocaleString('en-US')} files
+                {version.fileCount.toLocaleString('en-US')} assets
               </span>
               <span className="text-ink-muted">·</span>
               <span className="text-ink-muted">{formatBytes(version.totalBytes)}</span>
@@ -264,7 +264,7 @@ export default function CollectionOverviewBody({
                 </svg>
                 <span>
                   <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong>{' '}
-                  files
+                  assets
                 </span>
               </div>
               <div className="flex items-center gap-2">

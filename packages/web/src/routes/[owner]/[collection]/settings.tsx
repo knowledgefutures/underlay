@@ -428,7 +428,7 @@ export default function CollectionSettingsPage() {
         <SectionHeading>Export</SectionHeading>
         <p className="text-ink-muted mb-3 text-sm">
           Download a <code className="bg-parchment-dark px-1">.tar.gz</code> archive containing the
-          manifest, schema, records, and files for the latest version.
+          manifest, schema, records, and assets for the latest version.
         </p>
         <a
           href={`/api/collections/${owner}/${collection}/export`}

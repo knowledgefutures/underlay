@@ -282,6 +282,11 @@ tool compares it with the current version, saves a version with what changed, an
 missing from the output are removed. Read a collection with \`underlay export <collection>\`
 (NDJSON) and its schemas with \`underlay schema <collection>\`.
 
+To attach an asset (a PDF, an image) to a record, write its bytes anywhere under
+\`$UNDERLAY_OUT/assets/\` and put \`{"$asset": "ul:asset:<sha256 of the bytes, hex>"}\` in the
+record's data where it belongs. The run saves the assets its records attach, and stops if
+one attaches bytes it didn't write and this machine doesn't have.
+
 ## Commands
 
 - \`underlay status --json\`: collections here, versions not yet pushed, scripts, runs.
