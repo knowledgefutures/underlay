@@ -119,13 +119,16 @@ interface ArkOwner {
 
 /**
  * For a collection about to be deleted: if its ARK is live, the tombstone row that
- * keeps it answering. Null otherwise (an ARK never shown was never promised).
+ * keeps it answering. Null otherwise (an ARK never shown was never promised). A private
+ * collection's ARK answered only its members, so it gets none: a public tombstone would
+ * show anyone holding the ARK the collection's and owner's names.
  */
 export async function arkTombstoneFor(
   db: Db,
-  collection: { id: string; name: string },
+  collection: { id: string; name: string; public: boolean },
   owner: ArkOwner,
 ): Promise<typeof schema.arkTombstones.$inferInsert | null> {
+  if (!collection.public) return null
   const naan = orgNaan(owner)
   if (!naan) return null
   const [row] = await db

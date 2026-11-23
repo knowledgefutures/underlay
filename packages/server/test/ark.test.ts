@@ -617,9 +617,13 @@ describe('which orgs have ARKs', () => {
 })
 
 describe('deleted collections', () => {
-  it('leave a tombstone for a live ARK and a 404 for an ARK that was off', async () => {
-    const mk = async (slug: string, on: boolean) => {
+  it('leave a tombstone for a live public ARK and a 404 for one off or private', async () => {
+    const mk = async (slug: string, on: boolean, isPublic = true) => {
       const c = await t.h.collection(slug)
+      await t.h.ports.db
+        .update(schema.collections)
+        .set({ public: isPublic })
+        .where(eq(schema.collections.id, c.id))
       await t.req(`/api/collections/org/${slug}/ark`, {
         method: 'PATCH',
         user: t.user,
@@ -645,6 +649,8 @@ describe('deleted collections', () => {
     }
     const live = await mk('doomed', true)
     const off = await mk('quiet', false)
+    // A private collection's ARK answered only its members: no tombstone names it to anyone.
+    const hidden = await mk('secret', true, false)
 
     const r = await resolve(`ark:12345/${live}`)
     expect(r.status).toBe(410)
@@ -662,5 +668,6 @@ describe('deleted collections', () => {
     expect((await resolve(`ark:12345/${live}.v1.0.0`)).status).toBe(410)
 
     expect((await resolve(`ark:12345/${off}`)).status).toBe(404)
+    expect((await resolve(`ark:12345/${hidden}`)).status).toBe(404)
   })
 })

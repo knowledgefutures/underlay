@@ -23,6 +23,12 @@ import type { Ports, SizedFormat } from '../ports.js'
 export const IMAGE_WIDTHS = [64, 128, 256, 640, 1280, 1920, 2560] as const
 
 const IMMUTABLE = 'public, max-age=31536000, immutable'
+/**
+ * How long a colo keeps a sized copy. Names are content hashes, so a copy never goes
+ * stale, but an org that removes an image (or is deleted) shouldn't have it served from
+ * the cache for a year without the bucket being asked.
+ */
+const COLO_TTL = { ttlSeconds: 86_400 }
 const KEY = /^avatars\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+\.(png|jpg|gif|webp))$/
 const TYPES: Record<SizedFormat, string> = {
   avif: 'image/avif',
@@ -67,7 +73,7 @@ export function imageRoutes(portsOf: (c: Context) => Ports) {
     const stored = await assets.store.get(sized)
     if (stored) {
       const bytes = await stored.bytes()
-      await ports.cache.put(`img/${sized}`, bytes)
+      await ports.cache.put(`img/${sized}`, bytes, COLO_TTL)
       return image(bytes, format)
     }
 
@@ -83,7 +89,7 @@ export function imageRoutes(portsOf: (c: Context) => Ports) {
     ports.waitUntil(
       assets.store.put(sized, bytes, { contentType: TYPES[format], cacheControl: IMMUTABLE }),
     )
-    await ports.cache.put(`img/${sized}`, bytes)
+    await ports.cache.put(`img/${sized}`, bytes, COLO_TTL)
     return image(bytes, format)
   })
 
