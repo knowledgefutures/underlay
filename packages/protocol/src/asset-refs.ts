@@ -18,28 +18,39 @@ export const MEDIA_TYPE_MEMBER = 'mediaType'
 /** What to call an attached asset when it's saved: a file name, no directories. */
 export const FILE_NAME_MEMBER = 'fileName'
 
-// RFC 6838 restricted names, then optional parameters.
+// RFC 6838 restricted names, then optional parameters in printable ASCII (RFC 9110 8.3.1:
+// a media type is sent as a header, which takes no other characters).
 const MEDIA_TYPE =
-  /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}(?:\s*;.*)?$/i
+  /^([a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126})((?:[ \t]*;[\x20-\x7e]*)?)$/i
 
-/** A media type as an asset reference may declare it, or null when it isn't one. */
+/**
+ * A media type as an asset reference may declare it, or null when it isn't one. Type and
+ * subtype are case-insensitive (RFC 6838 4.2), so they come back lowercase.
+ */
 export function mediaTypeOf(v: unknown): string | null {
   if (typeof v !== 'string') return null
   const t = v.trim()
-  return t.length <= 255 && MEDIA_TYPE.test(t) ? t : null
+  const m = t.length <= 255 ? MEDIA_TYPE.exec(t) : null
+  return m ? m[1]!.toLowerCase() + m[2]! : null
 }
 
 /**
- * A file name as an asset reference may declare it, or null: no directories, no control
- * characters, at most 255 characters.
+ * Characters a file name may not hold: path separators, control characters (C0, DEL, C1), and
+ * the invisible formatting characters that can make a name read as another (bidirectional
+ * overrides and isolates, line and paragraph separators, a byte order mark).
+ */
+const NOT_IN_NAME =
+  // eslint-disable-next-line no-control-regex
+  /[/\\\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2028\u2029\u2066-\u2069\ufeff]/
+
+/**
+ * A file name as an asset reference may declare it, or null: no directories, no control or
+ * bidirectional formatting characters, at most 255 characters.
  */
 export function fileNameOf(v: unknown): string | null {
   if (typeof v !== 'string') return null
   const n = v.trim()
-  // eslint-disable-next-line no-control-regex
-  return n && n.length <= 255 && !/[/\\\u0000-\u001f\u007f]/.test(n) && n !== '.' && n !== '..'
-    ? n
-    : null
+  return n && n.length <= 255 && !NOT_IN_NAME.test(n) && n !== '.' && n !== '..' ? n : null
 }
 
 const ASSET_ID = /^ul:asset:([0-9a-f]{64})$/

@@ -9,7 +9,6 @@
  *   GET      /:owner/:slug/assets/uploads/:id/parts  presigned parts from ?from=
  *   GET      /:owner/:slug/assets/uploads/:id        pending | verifying | verified | failed
  */
-import { fileNameOf } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 
@@ -33,7 +32,7 @@ import {
   storeSmallFile,
 } from '../files/files.js'
 import { isDenied } from '../lib/limits.js'
-import { v3PresignDownloads, v3ReadableFiles } from '../v3/files.js'
+import { downloadName, v3PresignDownloads, v3ReadableFiles } from '../v3/files.js'
 import { fileSizes } from '../versions/file-refs.js'
 import { jsonError, requireCollection } from './access.js'
 
@@ -63,8 +62,9 @@ export function fileRoutes() {
       meter(c.var.meter, 'file_downloads', 1)
       meter(c.var.meter, 'file_bytes', size)
       c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
-      // ?fileName= saves it under the name an asset reference gives it (its `fileName`).
-      const name = fileNameOf(c.req.query('fileName'))
+      // ?fileName= saves it under the name an asset reference gives it (its `fileName`), unless
+      // that name would run when opened (v3/files.ts downloadName).
+      const name = downloadName(c.req.query('fileName'))
       const urls = await v3PresignDownloads(
         c.var.ports,
         found,
@@ -91,7 +91,10 @@ export function fileRoutes() {
       .limit(1)
     if (!f) return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
     if (head)
-      return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mediaType })
+      return c.body(null, 200, {
+        'content-length': String(f.size),
+        'content-type': safeMediaType(f.mediaType),
+      })
     meter(c.var.meter, 'file_downloads', 1)
     meter(c.var.meter, 'file_bytes', f.size)
     // The presigned URL lasts PRESIGN_SECONDS: a browser may reuse the redirect until shortly before.

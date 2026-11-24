@@ -17,7 +17,7 @@
  * is not there) is left out, and the rest give the counts the `versions` row needs, so
  * recording the commit costs what it changed.
  */
-import { hashSchema, jcs, MissingFilesError, v3 } from '@underlay/protocol'
+import { hashSchema, jcs, mediaTypeOf, MissingFilesError, v3 } from '@underlay/protocol'
 import { and, eq } from 'drizzle-orm'
 
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
@@ -446,7 +446,8 @@ async function assetChanges(
       rows.push(
         v3.rowFromRecord(h, v3.ASSET_TYPE, {
           size: u.size,
-          mediaType: declared.get(h) ?? u.mediaType,
+          // The upload's type is whatever its sender said: kept only if it is a media type.
+          mediaType: declared.get(h) ?? mediaTypeOf(u.mediaType),
         }),
       )
     }

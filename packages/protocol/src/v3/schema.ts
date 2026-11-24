@@ -1,3 +1,4 @@
+import { mediaTypeOf } from '../asset-refs.js'
 /**
  * Checking an upload before it is committed (docs/protocol/v3.md, Sections 4,
  * 7.3, and 7.4): its files came with it, are well formed, every record is canonical and satisfies
@@ -139,6 +140,10 @@ export function checkAssetData(data: unknown): string | null {
     !(data.mediaType === null || typeof data.mediaType === 'string')
   ) {
     return 'data must be {"size": n, "mediaType": string or null}'
+  }
+  // Section 5.3: an RFC 6838 media type of at most 255 characters, or null.
+  if (typeof data.mediaType === 'string' && mediaTypeOf(data.mediaType) !== data.mediaType) {
+    return `"mediaType" must be a media type, type/subtype in lowercase, at most 255 characters`
   }
   return null
 }

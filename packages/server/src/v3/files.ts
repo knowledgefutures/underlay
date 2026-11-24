@@ -8,7 +8,7 @@
  * Who may read one: anyone who may read the collection, for an asset any of its versions
  * named (as v2's public file set is cumulative), and members for bytes uploaded to it.
  */
-import { v3 } from '@underlay/protocol'
+import { fileNameOf, v3 } from '@underlay/protocol'
 
 import { presignDownloads, safeMediaType, uploadedFiles } from '../files/files.js'
 import { deniedHashes } from '../lib/limits.js'
@@ -61,9 +61,24 @@ export async function v3ReadableFiles(
  * `filename*`.
  */
 export function attachment(hash: string, name?: string | null): string {
+  name = downloadName(name)
   if (!name) return `attachment; filename="${hash}"`
   const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, '_')
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`
+}
+
+/**
+ * Extensions a system runs or installs when the file is opened. A collection's writer chooses
+ * its assets' names, and a download from the API comes from Underlay's own address, so an
+ * asset is never handed out under one of these: it is saved under its hash.
+ */
+const RUNNABLE =
+  /\.(app|apk|bat|cmd|com|cpl|dll|dmg|exe|hta|jar|js|jse|lnk|msi|msix|msp|pif|pkg|ps1|reg|scr|sh|vb|vbe|vbs|ws|wsf|wsh)$/i
+
+/** A name to save an asset under: a well-formed `fileName` that doesn't run when opened. */
+export function downloadName(name: string | null | undefined): string | null {
+  const n = fileNameOf(name)
+  return n && !RUNNABLE.test(n.replace(/[\s.]+$/, '')) ? n : null
 }
 
 /**
@@ -79,7 +94,7 @@ export async function v3PresignDownloads(
   const denied = await deniedHashes(ports.db)
   // Bytes uploaded but not committed yet are still where the upload put them.
   const uploaded = [...files].filter(([, d]) => d === null).map(([h]) => h)
-  const out = await presignDownloads(ports, uploaded)
+  const out = await presignDownloads(ports, uploaded, (h) => attachment(h, names?.get(h)))
   for (const [hash, data] of files) {
     if (denied.has(hash) || !data) continue
     out.set(

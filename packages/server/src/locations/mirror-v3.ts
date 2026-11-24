@@ -20,6 +20,7 @@ import { putFromParts, readParts, type Store, v3 } from '@underlay/protocol'
 import { eq } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
+import { safeMediaType } from '../files/files.js'
 import type { Ports } from '../ports.js'
 import { assetKey } from '../v3/rules.js'
 import { mirrorConfig } from './mirror.js'
@@ -57,22 +58,38 @@ const coversAssets = (f: v3.LayoutFile) =>
   v3.compareKeys(f.first[0], '', v3.ASSET_TYPE, '') <= 0 &&
   v3.compareKeys(v3.ASSET_TYPE, '', f.last[0], '') <= 0
 
-/** The assets the listed files name: every `$asset` row that is not a removal. */
-async function listedAssets(store: Store, files: v3.LayoutFile[]): Promise<string[]> {
-  const out = new Set<string>()
+/**
+ * The assets the listed files name: every `$asset` row that is not a removal, with the media
+ * type its row declares (the collection's, docs/protocol/v3.md 5.3). Files are in log order,
+ * so a later row's type wins.
+ */
+async function listedAssets(
+  store: Store,
+  files: v3.LayoutFile[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>()
   for (const f of files.filter(coversAssets)) {
     const at = await located(store, v3.recordKey(f.id))
     if (!at) throw new Error(`Record file ${f.id} is listed but missing`)
     const file = await v3.SortedFile.open(store, at.key, { id: f.id })
-    const cursor = new v3.EntryCursor(file.reader(), file.content.labeled ? null : 1)
+    const reader = file.reader()
+    const cursor = new v3.EntryCursor(reader, file.content.labeled ? null : 1)
     await cursor.seek({ type: v3.ASSET_TYPE, id: '' })
     while (cursor.current && cursor.current.type === v3.ASSET_TYPE) {
-      if (cursor.current.kind !== 'x') out.add(cursor.current.id)
+      const e = cursor.current
+      if (e.kind === 'r') {
+        const data = (JSON.parse(dec.decode(await reader.line(e))) as { data: unknown }).data as {
+          mediaType?: unknown
+        } | null
+        out.set(e.id, typeof data?.mediaType === 'string' ? data.mediaType : null)
+      } else if (e.kind !== 'x' && !out.has(e.id)) out.set(e.id, null)
       await cursor.next()
     }
   }
-  return [...out].sort()
+  return new Map([...out].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 }
+
+const dec = new TextDecoder()
 
 /**
  * Copy (part of) what a mirror of a v3 collection lacks. Called by `mirrorStep` holding
@@ -132,7 +149,7 @@ export async function v3MirrorStep(
   }
 
   // The assets they name.
-  for (const hash of await listedAssets(store, files)) {
+  for (const [hash, declared] of await listedAssets(store, files)) {
     if (doneAssets.has(hash)) continue
     const key = assetKey(hash)
     const at = await located(store, key)
@@ -142,8 +159,10 @@ export async function v3MirrorStep(
       .from(schema.files)
       .where(eq(schema.files.hash, hash))
       .limit(1)
+    // The type the collection declares, else the upload's; never one a browser renders.
+    const type = declared ?? row?.mediaType
     await putFromParts(dest, key, readParts(store, at.key, at.size, mirrorConfig.partBytes), {
-      ...(row?.mediaType ? { contentType: row.mediaType } : {}),
+      ...(type ? { contentType: safeMediaType(type) } : {}),
     })
     doneAssets.add(hash)
     bytes += at.size

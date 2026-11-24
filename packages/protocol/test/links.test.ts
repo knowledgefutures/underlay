@@ -148,8 +148,17 @@ describe('asset reference members', () => {
     expect(mediaTypeOf(' text/csv ')).toBe('text/csv')
     for (const v of ['png', 'image/', '/png', 'image png', 42, null])
       expect(mediaTypeOf(v)).toBeNull()
+    // Type and subtype are lowercased; parameters are kept, in printable ASCII only.
+    expect(mediaTypeOf('Image/PNG')).toBe('image/png')
+    expect(mediaTypeOf('text/plain; charset=UTF-8')).toBe('text/plain; charset=UTF-8')
+    for (const v of ['text/plain; name=\u540d', 'text/plain; a=\u0001', 'text/plain;\u00a0x'])
+      expect(mediaTypeOf(v)).toBeNull()
     expect(fileNameOf('Report (final).pdf')).toBe('Report (final).pdf')
+    expect(fileNameOf('Rapport \u00e9t\u00e9.pdf')).toBe('Rapport \u00e9t\u00e9.pdf')
     for (const v of ['', ' ', '..', 'a/b.pdf', 'a\\b.pdf', 'a\nb', 7])
+      expect(fileNameOf(v)).toBeNull()
+    // Names that read as another: a right-to-left override, a C1 control, a line separator.
+    for (const v of ['a\u202etxt.exe', 'a\u0085b.pdf', 'a\u2028b.pdf', 'a\ufeff.pdf'])
       expect(fileNameOf(v)).toBeNull()
   })
 })

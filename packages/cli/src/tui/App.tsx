@@ -6,7 +6,6 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Box, type Key as InkKey, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
@@ -956,10 +955,12 @@ export function App({
   const openAsset = (c: Coll, f: AssetRow) =>
     attempt(`Opening ${f.hash.slice(0, 12)}`, async () => {
       const { bytes: b, fetched } = await assetBytes(c, f.hash)
-      const dir = join(tmpdir(), 'underlay-assets')
-      mkdirSync(dir, { recursive: true })
+      // In this user's own data folder, not the shared temp folder, where another user could
+      // put a link at the path first.
+      const dir = join(ctx.env.dataDir, 'previews')
+      mkdirSync(dir, { recursive: true, mode: 0o700 })
       const path = join(dir, `${f.hash.slice(0, 12)}${extOf(f.mediaType)}`)
-      writeFileSync(path, b)
+      writeFileSync(path, b, { mode: 0o600 })
       openInBrowser(path)
       return `Opened ${f.hash.slice(0, 12)} (${bytes(f.size)})${fetched ? `: fetched for this, not kept here (k → everything keeps assets)` : ''}`
     })

@@ -20,7 +20,7 @@
  */
 import { createHash } from 'node:crypto'
 
-import { copyObject, fileTree, getEntry, RepoSource } from '@underlay/protocol'
+import { copyObject, fileTree, getEntry, mediaTypeOf, RepoSource } from '@underlay/protocol'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 
 import { FenceError, fenced, fenceHolds, fenceMoved } from '../cleanup/fence.js'
@@ -68,10 +68,14 @@ export async function presignParts(
   return parts
 }
 
-// Types that render or run in a browser are stored as inert bytes (v1 rule).
-const UNSAFE_MIME = /^(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml)/i
-export const safeMediaType = (mime: string | undefined) =>
-  !mime || UNSAFE_MIME.test(mime.trim()) ? 'application/octet-stream' : mime.trim()
+// Types that render or run in a browser are served as inert bytes (v1 rule), and so is
+// anything that isn't a media type a header can carry (mediaTypeOf: printable ASCII).
+const UNSAFE_MIME =
+  /^(text\/html|application\/xhtml|image\/svg|text\/xml|application\/xml|[^/]+\/[^;]*\+xml|text\/javascript|application\/(x-)?javascript)/i
+export const safeMediaType = (mime: string | null | undefined) => {
+  const t = mediaTypeOf(mime)
+  return !t || UNSAFE_MIME.test(t) ? 'application/octet-stream' : t
+}
 
 const HEX64 = /^[0-9a-f]{64}$/
 /** A record or asset hash as given in a path or body: bare hex, or `ul:rec:`/`ul:asset:`. */
@@ -188,6 +192,8 @@ export async function presignDownload(ports: Ports, hash: string): Promise<strin
 export async function presignDownloads(
   ports: Ports,
   hashes: string[],
+  /** A download name for a hash (v3/files.ts `downloadName`); the hash otherwise. */
+  disposition: (hash: string) => string = (h) => `attachment; filename="${h}"`,
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>()
   // Blocked files get no URL, whatever route asked (lib/limits.ts).
@@ -200,8 +206,8 @@ export async function presignDownloads(
         f.hash,
         await ports.stores.fileBytes.presigner.presignGet(f.storageKey, {
           expiresIn: PRESIGN_SECONDS,
-          disposition: `attachment; filename="${f.hash}"`,
-          contentType: f.mediaType,
+          disposition: disposition(f.hash),
+          contentType: safeMediaType(f.mediaType),
         }),
       )
     }
