@@ -117,6 +117,20 @@ async function snapshot(h: Harness, base: string, user: string) {
   return { semvers: versions.map((v) => v.semver), out }
 }
 
+type Snapshot = Awaited<ReturnType<typeof snapshot>>
+
+/** A v2 snapshot as v3 reads it once rewritten: `$file` references as `$asset`. */
+const asAssets = (s: Snapshot): Snapshot =>
+  JSON.parse(JSON.stringify(s).replaceAll('"$file":"sha256:', '"$asset":"ul:asset:')) as Snapshot
+
+/** A snapshot with the hash of every record that holds an asset reference left out. */
+const withoutChangedHashes = (s: Snapshot): Snapshot =>
+  JSON.parse(JSON.stringify(s), (k, v: unknown) =>
+    v && typeof v === 'object' && 'hash' in v && JSON.stringify(v).includes('"$asset"')
+      ? { ...v, hash: undefined }
+      : v,
+  ) as Snapshot
+
 async function conversion(h: Harness, collectionId: string) {
   const [row] = await h.ports.db
     .select()
@@ -158,7 +172,12 @@ describe('converting a v2 collection to v3', () => {
       .where(eq(schema.collections.id, c.id))
     expect(flipped!.recordLayout).toBe('v3')
     expect(flipped!.public).toBe(true)
-    expect(await snapshot(h, base, user)).toEqual(before)
+    // The same, but `$file` is rewritten to `$asset` after the flip (v3/rewrite.ts), so those
+    // records have new hashes.
+    expect(withoutChangedHashes(await snapshot(h, base, user))).toEqual(
+      withoutChangedHashes(asAssets(before)),
+    )
+    expect(JSON.stringify(await snapshot(h, base, user))).not.toContain('$file')
     const rows = await h.ports.db
       .select()
       .from(schema.versions)
@@ -329,7 +348,9 @@ describe('converting a v2 collection to v3', () => {
       convertConfig.partBytes = was
     }
     expect((await conversion(h, c.id)).status).toBe('flipped')
-    expect(await snapshot(h, base, user)).toEqual(before)
+    expect(withoutChangedHashes(await snapshot(h, base, user))).toEqual(
+      withoutChangedHashes(asAssets(before)),
+    )
     // The first version's records went into files built by several jobs.
     const first = await v3.readCommit(h.ports.stores.v3, c.id, 1)
     expect(v3.commitFiles(first!.commit).length).toBeGreaterThanOrEqual(2)
@@ -369,7 +390,9 @@ describe('converting a v2 collection to v3', () => {
     conv = await conversion(h, c.id)
     expect(conv.status).toBe('flipped')
     expect(await v3.headNumber(h.ports.stores.v3, c.id)).toBe(4)
-    expect(await snapshot(h, base, user)).toEqual(before)
+    expect(withoutChangedHashes(await snapshot(h, base, user))).toEqual(
+      withoutChangedHashes(asAssets(before)),
+    )
   })
 
   it('drops a converted collection deleted before it was flipped, after the grace', async () => {

@@ -541,8 +541,10 @@ export async function convertStep(ports: Ports, collectionId: string): Promise<v
   const outcome = await flipToV3(ports, fresh, collection, rows)
   if (outcome === 'flipped') {
     await setConversion(ports, collectionId, { status: 'flipped', error: null })
-    // Many small commits from the conversion: let the rebuild policy merge them.
-    await ports.jobs.enqueue({ type: 'v3.rebuild', collectionId })
+    // v2's lines are copied as they are, so `$file` references are rewritten into `$asset`
+    // first (rewrite.ts); then, many small commits from the conversion: the rewrite job
+    // queues the rebuild that lets the policy merge them.
+    await ports.jobs.enqueue({ type: 'v3.rewrite', collectionId, rebuild: true })
     console.log(`[v3.convert] ${collectionId} flipped to v3 at ${rows.at(-1)?.semver}`)
     return
   }
@@ -687,8 +689,16 @@ export async function revertToV2(ports: Ports, collectionId: string): Promise<st
     ...conv.versions.map((c) =>
       db
         .update(V)
-        .set({ ...c.v2, hash: c.v2Hash, v2Hash: null })
-        .where(and(eq(V.collectionId, collectionId), eq(V.seq, c.seq), eq(V.hash, c.id), back)),
+        .set({ ...c.v2, hash: c.v2Hash, v2Hash: null, formerHash: null })
+        .where(
+          and(
+            eq(V.collectionId, collectionId),
+            eq(V.seq, c.seq),
+            // The id the conversion gave it, or the one the rewrite after the flip gave it.
+            or(eq(V.hash, c.id), eq(V.formerHash, c.id)),
+            back,
+          ),
+        ),
     ),
   ] as never)
   const [after] = await db.select({ layout: C.recordLayout }).from(C).where(eq(C.id, collectionId))

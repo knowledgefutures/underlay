@@ -199,6 +199,105 @@ describe('rewrite', () => {
     await v3.verifyLog(store, 'c', { serverKeys: [signer.publicKey] })
   })
 
+  it('finishes a rewrite that stopped after writing its layout', async () => {
+    const build = async () => {
+      const store = memoryStore()
+      const signer = await ed25519Signer(seed)
+      const ref = (n: number) => ({ $file: `sha256:${H(n)}` })
+      await commitRows(
+        store,
+        [
+          rec('$asset', H(1), { size: 1, mediaType: null }),
+          rec('$schema', 'T', SCHEMA),
+          rec('T', 'a', { cover: ref(1) }),
+        ],
+        signer,
+      )
+      await commitRows(store, [rec('T', 'b', { cover: ref(1) })], signer)
+      await v3.rebuild(store, 'c', { plan: v3.planAll })
+      await commitRows(store, [rec('T', 'c', { n: 3 })], signer)
+      return { store, signer }
+    }
+    const whole = await build()
+    const want = await v3.rewriteCollection(whole.store, 'c', { signer: whole.signer })
+
+    const { store, signer } = await build()
+    const put = store.put.bind(store)
+    let fail = true
+    store.put = async (key, body, opts) => {
+      if (fail && key === v3.commitKey('c', 2)) {
+        fail = false
+        throw new Error('stopped')
+      }
+      return put(key, body, opts)
+    }
+    await expect(v3.rewriteCollection(store, 'c', { signer })).rejects.toThrow('stopped')
+    const done = await v3.rewriteCollection(store, 'c', { signer })
+    expect(done.commits).toEqual(want.commits)
+    await v3.verifyLog(store, 'c', { serverKeys: [signer.publicKey], files: true })
+  })
+
+  it('names the new hash of each denied record it converts', async () => {
+    const store = memoryStore()
+    const signer = await ed25519Signer(seed)
+    const a = rec('T', 'a', { cover: { $file: `sha256:${H(1)}` } })
+    await commitRows(
+      store,
+      [rec('$asset', H(1), { size: 1, mediaType: null }), rec('$schema', 'T', SCHEMA), a],
+      signer,
+    )
+    const view = await v3.openView(store, 'c')
+    const before = (await v3.getRecord(store, view, 'T', 'a'))!.hash!
+    const plan = await v3.rewriteCollection(store, 'c', { signer, denied: new Set([before]) })
+    const after = (await v3.getRecord(store, await v3.openView(store, 'c'), 'T', 'a'))!.hash!
+    expect(after).not.toBe(before)
+    expect(plan.denied).toEqual([{ before, after }])
+  })
+
+  it('reads no rows again over a collection with assets it already rewrote', async () => {
+    const store = memoryStore()
+    const signer = await ed25519Signer(seed)
+    await commitRows(
+      store,
+      [
+        rec('$asset', H(1), { size: 1, mediaType: null }),
+        rec('$schema', 'T', SCHEMA),
+        rec('T', 'a', { cover: { $file: `sha256:${H(1)}` } }),
+      ],
+      signer,
+    )
+    await v3.rewriteCollection(store, 'c', { signer })
+    // Rows held in memory would pass one byte.
+    const again = await v3.rewriteCollection(store, 'c', { signer, maxScanBytes: 1 })
+    expect(again.records).toBe(0)
+  })
+
+  it('leaves a $file inside a $link alone', () => {
+    const link = { $link: `ul:rec:${H(3)}`, $file: `sha256:${H(4)}` }
+    expect(v3.convertFileRefs({ x: link })).toEqual({ data: { x: link }, count: 0 })
+  })
+
+  it('renames $file wherever a schema names members, and refuses what it cannot convert', () => {
+    const { schema, count } = v3.convertSchemaRefs({
+      type: 'object',
+      dependentRequired: { $file: ['fileName'], fileName: ['$file'] },
+      propertyNames: { enum: ['$file', 'fileName'] },
+    })
+    expect(count).toBe(2)
+    expect(schema).toEqual({
+      type: 'object',
+      dependentRequired: { $asset: ['fileName'], fileName: ['$asset'] },
+      propertyNames: { enum: ['$asset', 'fileName'] },
+    })
+    // The pattern reached through a $ref is not converted, so the schema is refused.
+    expect(() =>
+      v3.convertSchemaRefs({
+        $defs: { ref: { type: 'string', pattern: '^sha256:' } },
+        properties: { $file: { $ref: '#/$defs/ref' } },
+      }),
+    ).toThrow(/edit it by hand/)
+  })
+
   it('converts a schema that names $file, as PubPub schemas do, with its records', async () => {
     const store = memoryStore()
     const signer = await ed25519Signer(seed)

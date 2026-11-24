@@ -73,6 +73,8 @@ export interface RewritePlan {
   files: number
   /** The layout written, when files changed. */
   layout: number | null
+  /** Records on the denylist (`RewriteOptions.denied`) whose line changed: hex before and after. */
+  denied?: { before: string; after: string }[]
   createdAt: string
 }
 
@@ -84,6 +86,11 @@ export interface RewriteOptions {
   now?: () => Date
   /** Most bytes of lines read when records must be scanned; past it the rewrite refuses. */
   maxScanBytes?: number
+  /**
+   * Hashes (hex) of record lines that are never served. A converted line has a new hash, so
+   * the plan names each one's new hash for the caller to deny too.
+   */
+  denied?: ReadonlySet<string>
 }
 
 export class RewriteError extends Error {
@@ -123,6 +130,8 @@ export function convertFileRefs(data: unknown): { data: unknown; count: number }
       return changed ? out : v
     }
     const o = v as Record<string, unknown>
+    // A link's members are the link's (links.ts), so a `$file` beside `$link` stays as it is.
+    if (Object.hasOwn(o, '$link')) return v
     if (Object.hasOwn(o, '$file') && typeof o.$file === 'string') {
       const m = FILE_REF.exec(o.$file)
       if (m) {
@@ -138,7 +147,7 @@ export function convertFileRefs(data: unknown): { data: unknown; count: number }
         return out
       }
     }
-    if (Object.hasOwn(o, '$asset') || Object.hasOwn(o, '$link')) return v
+    if (Object.hasOwn(o, '$asset')) return v
     let changed = false
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(o)) {
@@ -202,13 +211,65 @@ export function convertSchemaRefs(schema: unknown): { schema: unknown; count: nu
         y = y.map((r) => (r === '$file' ? '$asset' : r))
         count++
       }
+      // Other keywords that name members: `dependentRequired` and `dependencies` (keys, and
+      // arrays of names), and a `propertyNames` `const` or `enum`.
+      if ((k === 'dependentRequired' || k === 'dependencies') && isObject(y)) {
+        const renamed = renameNames(y)
+        if (renamed !== y) {
+          y = renamed
+          count++
+        }
+      }
+      if (k === 'propertyNames' && isObject(y)) {
+        if (y.const === '$file') {
+          y = { ...y, const: '$asset' }
+          count++
+        } else if (Array.isArray(y.enum) && y.enum.includes('$file')) {
+          y = { ...y, enum: y.enum.map((e: unknown) => (e === '$file' ? '$asset' : e)) }
+          count++
+        }
+      }
       if (y !== o[k]) changed = true
       out[k] = y
     }
     return changed ? out : v
   }
   const schema2 = walk(schema)
+  if (count > 0) {
+    // Converted only in part: a `$file` left anywhere, or a `sha256:` pattern reached some
+    // other way (a `$ref`), would refuse every `$asset` from now on. A steward edits it.
+    const text = JSON.stringify(schema2)
+    if (text.includes('"$file"') || text.includes('sha256:')) {
+      throw new RewriteError(
+        'A schema still names $file or sha256: once converted; edit it by hand',
+      )
+    }
+  }
   return { schema: schema2, count }
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
+
+/** An object keyed by member names, with `$file` renamed in its keys and its arrays of names. */
+function renameNames(o: Record<string, unknown>): Record<string, unknown> {
+  let changed = false
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(o)) {
+    let v = o[k]
+    if (Array.isArray(v) && v.includes('$file')) {
+      v = v.map((x: unknown) => (x === '$file' ? '$asset' : x))
+      changed = true
+    }
+    if (k === '$file') {
+      if (Object.hasOwn(o, '$asset')) throw new RewriteError('A schema names both $file and $asset')
+      changed = true
+      out.$asset = v
+    } else {
+      out[k] = v
+    }
+  }
+  return changed ? out : o
 }
 
 /**
@@ -240,7 +301,9 @@ function convertSchemaLine(line: string): string | null {
   if (!line.includes('"$file"')) return null
   const o = JSON.parse(line) as { id: string; type: string; data: unknown }
   const { schema, count } = convertSchemaRefs(o.data)
-  if (count === 0) return null
+  if (count === 0) {
+    throw new RewriteError(`The schema of ${o.id} names $file where the rewrite can't convert it`)
+  }
   return (
     '{"id":' +
     JSON.stringify(o.id) +
@@ -300,16 +363,20 @@ const filesOfRaw = (raw: Record<string, unknown>): FileRef[] =>
   (raw.changes as { files: FileRef[] }[]).flatMap((c) => c.files)
 
 /**
- * Whether a collection's rows must be read: some file holds a `$asset` row (only then can a
- * record hold a reference), or a `$schema` row that names `$file`. Reserved rows sort first
- * (`$asset` < `$meta` < `$schema` < any publisher type), so a file is opened only if its first
- * key, as its layout or commit records it, is one of them; and then only its first key blocks
- * are read, however large it is. A collection of thousands of files of records opens none.
+ * Whether a collection's rows must be read: a `$schema` row names `$file`, or some file holds
+ * a `$asset` row (only then can a record hold a reference) and some record line still holds
+ * `"$file"`. Reserved rows sort first (`$asset` < `$meta` < `$schema` < any publisher type),
+ * so for the first test a file is opened only if its first key, as its layout or commit
+ * records it, is one of them; and then only its first key blocks are read, however large it
+ * is. A collection of thousands of files of records and no assets opens none. With assets,
+ * lines are read one at a time and let go (holdsFileRef), so running again over a collection
+ * already rewritten costs a read, not its whole history in memory.
  */
 async function mustScan(
   store: Store,
   files: { id: string; first: [string, string] | null }[],
 ): Promise<boolean> {
+  let assets = false
   const pastSchemas = (k: [string, string] | null) =>
     k !== null && compareKeys(k[0], k[1], SCHEMA_TYPE, '\u{10FFFF}') > 0
   for (const { id, first } of files) {
@@ -321,9 +388,24 @@ async function mustScan(
     for (let b = 0; b < blocks.length; b++) {
       if (pastSchemas([blocks[b]![0], blocks[b]![1]])) break
       for (const e of await reader.keyBlock(b)) {
-        if (e.type === '$asset') return true
+        if (e.type === '$asset') assets = true
         if (e.type !== SCHEMA_TYPE) continue
         if (e.kind === 'r' && dec.decode(await reader.line(e)).includes('"$file"')) return true
+      }
+    }
+  }
+  return assets && holdsFileRef(store, files)
+}
+
+/** Whether a record line in these files holds `"$file"`, read one line at a time. */
+async function holdsFileRef(store: Store, files: { id: string }[]): Promise<boolean> {
+  for (const { id } of files) {
+    const f = await openFile(store, id)
+    const reader = f.reader()
+    for (let b = 0; b < f.content.keyBlocks.length; b++) {
+      for (const e of await reader.keyBlock(b)) {
+        if (e.kind !== 'r' || e.type.startsWith('$')) continue
+        if (dec.decode(await reader.line(e)).includes('"$file"')) return true
       }
     }
   }
@@ -433,7 +515,12 @@ export async function rewriteCollection(
         filesOfRaw(c.raw).map((f) => ({ id: f.id, commit: c.number, first: f.first })),
       ),
   ]
-  const scan = await mustScan(store, sources)
+  // A rewrite that stopped part way: rows are read whatever the files hold now, since a
+  // layout it wrote may already hold every converted row while commits still name old files.
+  const unfinished =
+    previousPlan !== null &&
+    previousPlan.commits.some((p) => old[p.number - 1] && old[p.number - 1]!.hex !== p.after)
+  const scan = unfinished || (await mustScan(store, sources))
   const rows = scan
     ? await rowsByCommit(store, sources, opts.maxScanBytes ?? 4 * 1024 * 1024 * 1024)
     : new Map<number, Row[]>()
@@ -443,6 +530,7 @@ export async function rewriteCollection(
   const schemas = new Map<string, SchemaValidator | 'unaffected' | null>()
   let records = 0
   const schemaPairs: RewritePlan['schemas'] = []
+  const deniedPairs: { before: string; after: string }[] = []
   const writes: { key: string; bytes: Uint8Array }[] = []
   let filesWritten = 0
   // A changed commit at or below the layout's `through`: its rows in the layout's files are
@@ -498,6 +586,9 @@ export async function rewriteCollection(
           `Commit ${c.number}: ${r.type} ${JSON.stringify(r.id)} fails its schema once converted: ${errors[0]}`,
         )
       }
+      if (r.hash && opts.denied?.has(r.hash)) {
+        deniedPairs.push({ before: r.hash, after: sha256Hex(line) })
+      }
       converted.push({ ...r, line, hash: null, size: utf8(line).byteLength })
     }
     records += changed - schemaRows
@@ -515,13 +606,17 @@ export async function rewriteCollection(
       const byFirst = (f: FileRef) => (f.first ? `${f.first[0]}\u0000${f.first[1]}` : '')
       const order = new Map(files.map((f, i) => [byFirst(f), i]))
       written.sort((a, b) => (order.get(byFirst(a.ref)) ?? 0) - (order.get(byFirst(b.ref)) ?? 0))
-      if (changed === 0) {
-        // Its own files, made again from the layout's rows, must be the files it named.
-        const ids = written.map((w) => w.ref.id).sort()
-        const want = files.map((f) => f.id).sort()
-        if (ids.join() !== want.join()) {
-          throw new RewriteError(`Commit ${c.number}: its files could not be made again`)
-        }
+      const ids = written.map((w) => w.ref.id).sort()
+      const want = files.map((f) => f.id).sort()
+      if (changed === 0 && ids.join() === want.join()) {
+        // Its own files, made again from the layout's rows: the files it named.
+      } else if (changed === 0 && (!unfinished || (raw.changes as unknown[]).length !== 1)) {
+        throw new RewriteError(`Commit ${c.number}: its files could not be made again`)
+      } else if (changed === 0) {
+        // A stopped rewrite wrote the layout these rows came from, already converted, and
+        // stopped before this commit: it takes the files that layout lists for it.
+        files = written.map((w) => w.ref)
+        filesWritten += written.length
       } else {
         files = written.map((w) => w.ref)
         filesWritten += written.length
@@ -546,7 +641,9 @@ export async function rewriteCollection(
     }
     const changes = (raw.changes as Record<string, unknown>[]).map((ch, i) => {
       const base = mapId(ch.base, `Commit ${c.number} change ${i} base`)
-      const out = { ...ch, base, files: i === 0 ? files : (ch.files as FileRef[]) }
+      // `files` is all of a commit's files together: only a commit of one change takes it.
+      const one = (raw.changes as unknown[]).length === 1
+      const out = { ...ch, base, files: one ? files : (ch.files as FileRef[]) }
       if (ch.sig !== null && (base !== ch.base || out.files !== ch.files)) {
         throw new RewriteError(`Commit ${c.number}: an author's signed change would change`)
       }
@@ -580,6 +677,7 @@ export async function rewriteCollection(
     schemas: schemaPairs,
     files: filesWritten,
     layout: needLayout && layout ? layout.number + 1 : null,
+    ...(opts.denied ? { denied: deniedPairs } : {}),
     createdAt: now().toISOString(),
   }
   if (needLayout && layout?.retained) {
@@ -607,6 +705,13 @@ export async function rewriteCollection(
       throw new RewriteError('A rebuild wrote a layout meanwhile; run the rewrite again')
     }
     await writeLayoutHint(store, collection, next.number)
+  } else if (filesWritten > 0 && layout) {
+    // Only commits after the layout wrote files again. The same layout under the next number
+    // fences off a rebuild planned before the rewrite, which would merge their old files.
+    const next: Layout = { ...layout, number: layout.number + 1, createdAt: now().toISOString() }
+    if (!(await createLayout(store, next))) {
+      throw new RewriteError('A rebuild wrote a layout meanwhile; run the rewrite again')
+    }
   }
 
   for (const c of newCommits) {
