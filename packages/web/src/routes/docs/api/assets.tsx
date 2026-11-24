@@ -95,7 +95,7 @@ const assetRefExample = `{
 }`
 
 const missingAssetsRes = `{
-  "error": "Missing files",
+  "error": "Missing assets",
   "assetsNeeded": ["a1b2c3d4e5f6..."],
   "statusCode": 422
 }`
@@ -222,8 +222,12 @@ export default function DocsApiAssets() {
           The presigned URL lasts 300 seconds and downloads the asset as an attachment, with the
           collection&rsquo;s <code>mediaType</code> for it. It&rsquo;s saved under its hash, or
           under <code>?fileName=</code> when you give one, such as an asset reference&rsquo;s{' '}
-          <code>fileName</code> (no <code>/</code>, <code>\</code>, or control characters, not{' '}
-          <code>.</code> or <code>..</code>, at most 255 characters; anything else is ignored). The
+          <code>fileName</code> (no <code>/</code>, <code>\</code>, control characters, or
+          bidirectional formatting characters, not <code>.</code> or <code>..</code>, at most 255
+          characters; anything else is ignored). A name that a system runs when it&rsquo;s opened,
+          such as <code>.exe</code>, <code>.bat</code>, or <code>.sh</code>, is ignored too. An
+          asset uploaded but not yet committed is named the same way. A type a browser would render
+          or run (HTML, SVG, XML, JavaScript) is sent as <code>application/octet-stream</code>. The
           redirect carries <code>Cache-Control: private, max-age=240</code>, so a browser may reuse
           it until shortly before the URL expires. This API path is the durable locator for the
           asset; the redirect target is{' '}
@@ -444,8 +448,10 @@ export default function DocsApiAssets() {
         The collection serves an asset as the <code>mediaType</code> its records declare, over the{' '}
         <code>Content-Type</code> it was uploaded with, and changing the declared type changes it at
         the next commit. It is this collection&rsquo;s type only: another collection holding the
-        same bytes declares its own. A <code>mediaType</code> or <code>fileName</code> that
-        isn&rsquo;t well formed is ignored, not refused.
+        same bytes declares its own. A <code>mediaType</code> is a <code>type/subtype</code> (case
+        doesn&rsquo;t matter; it&rsquo;s kept in lowercase), with optional parameters in printable
+        ASCII. A <code>mediaType</code> or <code>fileName</code> that isn&rsquo;t well formed is
+        ignored, not refused.
       </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{missingAssetsRes}</code>
@@ -464,8 +470,39 @@ export default function DocsApiAssets() {
         <Link to="/docs/api/records#links-in-records" className="text-link underline">
           Links in records
         </Link>
-        ). Wherever a route takes an asset hash, it takes bare hex or a <code>ul:asset:</code> id.
+        ). Wherever a route takes an asset hash, it takes bare hex or a <code>ul:asset:</code> id,{' '}
+        <code>assets.add</code> and <code>assets.remove</code> in a push included.
       </p>
+
+      <h2 id="renamed">Renamed in November 2026</h2>
+      <p>
+        Until 2026-11-24 the API called assets files. Clients written before then need these
+        changes; the old names now get <code>404</code> or <code>400</code>:
+      </p>
+      <ul>
+        <li>
+          <code>…/files/…</code> routes are <code>…/assets/…</code>.
+        </li>
+        <li>
+          A hash in a path is bare hex or <code>ul:asset:&lt;hex&gt;</code>; a <code>sha256:</code>{' '}
+          prefix is refused.
+        </li>
+        <li>
+          A multipart upload names its part <code>asset</code>, not <code>file</code>.
+        </li>
+        <li>
+          <code>fileCount</code> is <code>assetCount</code>, <code>filesNeeded</code> is{' '}
+          <code>assetsNeeded</code>, a push&rsquo;s <code>files</code> is <code>assets</code>, and{' '}
+          <code>mimeType</code> is <code>mediaType</code>.
+        </li>
+        <li>
+          The refusal for assets never sent is <code>Missing assets</code>, not{' '}
+          <code>Missing files</code>.
+        </li>
+        <li>
+          Records attach assets with <code>$asset</code>; <code>$file</code> is refused.
+        </li>
+      </ul>
     </DocsLayout>
   )
 }

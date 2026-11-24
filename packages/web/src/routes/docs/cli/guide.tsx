@@ -221,9 +221,11 @@ writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).joi
         A script attaches an asset (a PDF, an image) by writing its bytes into{' '}
         <code>$UNDERLAY_OUT/assets/</code>, under any name and folder, and attaching it to a record
         with <code>{'{"$asset": "ul:asset:<hex>"}'}</code>, the SHA-256 of the bytes in lowercase
-        hex. Other members of that object, such as a file name, are yours. After the run, each asset
-        is stored here once, named in the version, and sent before that version on push. A field
-        that holds an asset has the schema{' '}
+        hex. Give it a <code>mediaType</code> (<code>application/pdf</code>) and a{' '}
+        <code>fileName</code> (<code>paper.pdf</code>) too: the collection serves the asset as that
+        type, and readers save it under that name. Any other member is yours. After the run, each
+        asset is stored here once, named in the version, and sent before that version on push. A
+        field that holds an asset has the schema{' '}
         <code>{'{"type": "object", "required": ["$asset"]}'}</code>. A record attaching an asset the
         run didn&apos;t write, and that isn&apos;t here already, stops the save and names the
         record, and so does a record with a <code>$file</code>.

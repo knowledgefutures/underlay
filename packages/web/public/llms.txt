@@ -215,11 +215,21 @@ GET /api/collections/:owner/:slug/assets/:hash
       get assets uploaded to the collection and verified but not committed yet. The API path is
       the durable locator: never store the redirect target. An asset you can't read is 404; 451
       if an asset you can read is withheld. It downloads as the collection's mediaType for it,
-      saved under its hash, or under ?fileName=<name> (an asset reference's fileName) if given.
+      saved under its hash, or under ?fileName=<name> (an asset reference's fileName) if given
+      and not a name a system runs when opened (.exe, .bat, .sh, and the like). A type a
+      browser would render or run (HTML, SVG, XML, JavaScript) is sent as
+      application/octet-stream.
 HEAD /api/collections/:owner/:slug/assets/:hash  → 200 with content-length and content-type if
                                                    you may read the asset (the same rule), else 404 or 451
 POST /api/collections/:owner/:slug/assets/presign → {"hashes": [...]} (up to 500)
                                                    → {hash: presignedUrl | null}
+
+Renamed 2026-11-24 (clients written before need these changes): /files/ routes are /assets/;
+a hash in a path is bare hex or ul:asset:<hex> (sha256: is refused); a multipart upload's part
+is "asset"; fileCount is assetCount, filesNeeded is assetsNeeded, a push's "files" is "assets",
+mimeType is mediaType; the refusal for assets never sent is "Missing assets"; records attach
+with $asset, and $file is refused. assets.add and assets.remove in a push take bare hex or
+ul:asset:<hex>.
 
 :hash is 64 hex characters; a "ul:asset:" prefix is accepted.
 
@@ -419,7 +429,7 @@ A commit you didn't ask to run in the background can still answer 202 {"session_
 "status": "committing"} when its work moves to the background; poll the same way.
 
 Poll GET /api/collections/:owner/:slug/push/:sessionId until status is "committed" or "failed"
-(or "open" again, with "error", after a "Missing files" refusal; see Step 7):
+(or "open" again, with "error", after a "Missing assets" refusal; see Step 7):
 {
   "session_id": "uuid",
   "status": "committed",
@@ -465,7 +475,7 @@ Refused schema (422 at open): {"error": "<why>"} → fix the schema and open aga
 Schema change invalidates existing records (422 at commit): {"error": "Schema validation failed",
 "validationErrors": [...], "totalErrors": n}
 
-Missing assets (422 at commit): {"error": "Missing files", "assetsNeeded": ["abc..."]}
+Missing assets (422 at commit): {"error": "Missing assets", "assetsNeeded": ["abc..."]}
 (bare hex, at most 100 listed)
 → The session stays open: upload the listed assets, then commit the same session again. After a
   background commit, polling shows status "open" with this body in "error".
@@ -484,7 +494,7 @@ other failure is final: the commit answers 409, so push again in a new session.
 GET    /api/collections/:owner/:slug/push/:sessionId  → session status (and result after a commit)
 DELETE /api/collections/:owner/:slug/push/:sessionId  → abandon the session
 
-Status is one of: open (accepting uploads; "error" holds a "Missing files" refusal, if the last
+Status is one of: open (accepting uploads; "error" holds a "Missing assets" refusal, if the last
 commit had one), committing, committed ("result" holds the version), failed ("error" says why),
 expired (idle too long, or abandoned).
 
@@ -602,8 +612,9 @@ These answer on www.underlay.org, but do not work yet:
   {"$asset": "ul:asset:<hex>", "mediaType": "<type/subtype>", "fileName": "<name>"}; point at
   an exact record, asset, or version anywhere on Underlay with a link (next section).
 - On an asset reference, give "mediaType" (what the bytes are, an IANA media type such as
-  "application/pdf") and "fileName" (what they're saved as: no /, \, or control characters,
-  not . or .., at most 255 characters). The collection serves
+  "application/pdf"; type/subtype in any case, kept lowercase, with parameters in printable
+  ASCII) and "fileName" (what they're saved as: no /, \, control characters, or bidirectional
+  formatting characters, not . or .., at most 255 characters). The collection serves
   the asset as the mediaType its records declare, over the Content-Type it was uploaded with,
   and the type is that collection's alone: another collection holding the same bytes declares
   its own. A malformed mediaType or fileName is ignored, not refused. Any other member of the

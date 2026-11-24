@@ -1,6 +1,6 @@
 {
   "underlay": 3,
-  "note": "docs/protocol/v3.md, Sections 5.1 to 5.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`; a `$file` is refused and not read).",
+  "note": "docs/protocol/v3.md, Sections 5.1 to 5.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`; a `$file` is refused and not read); `mediaTypes` is the media type each attached asset is declared as (a malformed one declares nothing).",
   "ids": [
     {
       "input": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -119,7 +119,8 @@
           "path": "/source"
         }
       ],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -154,7 +155,8 @@
           "collection": "c-1"
         }
       ],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -165,7 +167,8 @@
       },
       "problem": "$file at /pdf is not read: attach an asset with {\"$asset\": \"ul:asset:<hex>\"}",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -184,7 +187,8 @@
           "path": "/a"
         }
       ],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -200,7 +204,8 @@
           "path": "/a~1b~0c"
         }
       ],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -217,7 +222,8 @@
           "path": "/note"
         }
       ],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -227,7 +233,8 @@
       },
       "problem": "$link at /x is bare hex: write ul:rec:<hex>, ul:asset:<hex>, or ul:ver:<hex>",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -237,7 +244,8 @@
       },
       "problem": "$link at /x is a ulv3: id: write ul:ver:<hex>",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -247,7 +255,8 @@
       },
       "problem": "$link at /x is a sha256: hash: write ul:asset:<hex>",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -257,7 +266,8 @@
       },
       "problem": "$link at /x must be lowercase",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -269,7 +279,8 @@
       },
       "problem": "$link at /x/0 must be a string",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -280,7 +291,8 @@
       },
       "problem": "$link at /x: \"collection\" must be a collection id",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -291,7 +303,8 @@
       },
       "problem": "$link at /x: \"type\" must be a string of 1 to 1024 characters",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -309,7 +322,108 @@
           "attached": true
         }
       ],
-      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {}
+    },
+    {
+      "data": {
+        "a": {
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "mediaType": "Image/PNG"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/a",
+          "attached": true
+        }
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "image/png"
+      }
+    },
+    {
+      "data": {
+        "a": {
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "mediaType": "text/plain; charset=utf-8"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/a",
+          "attached": true
+        }
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "data": {
+        "a": {
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "mediaType": "png"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/a",
+          "attached": true
+        }
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {}
+    },
+    {
+      "data": {
+        "a": {
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "mediaType": "text/plain; name=名"
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/a",
+          "attached": true
+        }
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {}
+    },
+    {
+      "data": {
+        "a": {
+          "$asset": "ul:asset:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "fileName": "../x",
+          "mediaType": 7
+        }
+      },
+      "problem": null,
+      "links": [
+        {
+          "kind": "asset",
+          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "path": "/a",
+          "attached": true
+        }
+      ],
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -331,7 +445,8 @@
           "attached": true
         }
       ],
-      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -341,7 +456,8 @@
       },
       "problem": "$asset at /x is bare hex: write ul:asset:<hex>",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -351,7 +467,8 @@
       },
       "problem": "$asset at /x is a sha256: hash: write ul:asset:<hex>",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -361,7 +478,8 @@
       },
       "problem": "$asset at /x names a record: $asset takes ul:asset:<hex>",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -371,7 +489,8 @@
       },
       "problem": "$asset at /x must be lowercase",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -381,7 +500,8 @@
       },
       "problem": "$asset at /x must be a string",
       "links": [],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     },
     {
       "data": {
@@ -398,7 +518,8 @@
           "path": "/x"
         }
       ],
-      "assets": []
+      "assets": [],
+      "mediaTypes": {}
     }
   ]
 }

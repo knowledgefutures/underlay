@@ -296,7 +296,7 @@ export default function ProtocolVersions() {
         refused, and the client pushes again.
       </p>
 
-      <h2 id="naming-a-file">Naming a file</h2>
+      <h2 id="naming-a-file">Naming a file or an asset</h2>
       <p>
         A server MUST NOT accept a change that names a file unless the file&rsquo;s bytes came with
         that upload and check out against the file id. That a file with the id is already stored is

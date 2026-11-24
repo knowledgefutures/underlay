@@ -86,12 +86,12 @@ const assetRefMembers: [string, string, string][] = [
   [
     'mediaType',
     'Recommended',
-    'What the bytes are: an IANA media type, type/subtype (RFC 6838), such as image/png',
+    'What the bytes are: an IANA media type, type/subtype (RFC 6838), such as image/png, with optional parameters in printable ASCII',
   ],
   [
     'fileName',
     'Recommended',
-    'What to call the bytes when they’re saved: a file name, with no /, \\, or control characters, not . or .., at most 255 characters',
+    'What to call the bytes when they’re saved: a file name, with no /, \\, control characters, or bidirectional formatting characters, not . or .., at most 255 characters',
   ],
   ['Any other', 'Optional', 'The publisher’s, such as where the bytes came from'],
 ]

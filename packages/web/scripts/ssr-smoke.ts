@@ -368,8 +368,11 @@ try {
         'Assets API',
         'POST /api/collections/:owner/:slug/assets/presign',
         'Asset references in records',
+        // The old names, said once, for clients written before.
+        'Renamed in November 2026',
       ],
-      lacks: ['filesNeeded', 'answers at <code>/files/</code>'],
+      // filesNeeded as a field of an example body, rather than in that list.
+      lacks: ['&quot;filesNeeded&quot;', '"filesNeeded"', 'answers at <code>/files/</code>'],
     },
     {
       path: '/docs/protocol/v3/repositories',

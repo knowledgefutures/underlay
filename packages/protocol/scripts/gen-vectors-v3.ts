@@ -10,6 +10,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  assetMediaTypes,
   assetRefs,
   checkLinks,
   ed25519Signer,
@@ -217,8 +218,15 @@ const linkCases = [
   { data: { x: [{ $link: 7 }] } },
   { data: { x: { $link: `ul:rec:${h('a')}`, collection: 'has space' } } },
   { data: { x: { $link: `ul:rec:${h('a')}`, type: '' } } },
-  // Asset references (Section 2.3): `$asset` attaches; `$file` is the older form.
+  // Asset references (Section 5.3): `$asset` attaches; `$file`, the drafts' form, is refused.
   { data: { cover: { $asset: `ul:asset:${h('b')}`, fileName: 'cover.png' } } },
+  // A `mediaType` that isn't one declares nothing, and the record is not refused for it; a
+  // well-formed one comes back with its type and subtype lowercase.
+  { data: { a: { $asset: `ul:asset:${h('b')}`, mediaType: 'Image/PNG' } } },
+  { data: { a: { $asset: `ul:asset:${h('b')}`, mediaType: 'text/plain; charset=utf-8' } } },
+  { data: { a: { $asset: `ul:asset:${h('b')}`, mediaType: 'png' } } },
+  { data: { a: { $asset: `ul:asset:${h('b')}`, mediaType: 'text/plain; name=\u540d' } } },
+  { data: { a: { $asset: `ul:asset:${h('b')}`, fileName: '../x', mediaType: 7 } } },
   { data: { figures: [{ $asset: `ul:asset:${h('b')}` }, { $file: `sha256:${h('d')}` }] } },
   { data: { x: { $asset: h('b') } } },
   { data: { x: { $asset: `sha256:${h('b')}` } } },
@@ -231,6 +239,7 @@ const linkCases = [
   problem: checkLinks(data),
   links: links(data),
   assets: assetRefs(data),
+  mediaTypes: assetMediaTypes(data),
 }))
 const linksPath = resolve(dirname(fileURLToPath(import.meta.url)), '../test/vectors/v3-links.json')
 writeFileSync(
@@ -238,7 +247,7 @@ writeFileSync(
   JSON.stringify(
     {
       underlay: 3,
-      note: 'Sections 2.1 to 2.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`, and the older `$file`).',
+      note: 'docs/protocol/v3.md, Sections 5.1 to 5.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`; a `$file` is refused and not read); `mediaTypes` is the media type each attached asset is declared as (a malformed one declares nothing).',
       ids: idCases,
       links: linkCases,
     },

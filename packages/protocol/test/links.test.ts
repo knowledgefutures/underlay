@@ -127,6 +127,7 @@ describe('links', () => {
       expect(checkLinks(c.data)).toBe(c.problem)
       expect(links(c.data)).toEqual(c.links)
       expect(assetRefs(c.data)).toEqual(c.assets)
+      expect(assetMediaTypes(c.data)).toEqual(c.mediaTypes)
     }
   })
 })

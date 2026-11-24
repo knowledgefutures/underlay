@@ -482,8 +482,8 @@ export default function DocsApiVersions() {
           </a>{' '}
           until <code>status</code> is <code>committed</code> (<code>result</code> is the{' '}
           <code>201</code> body), <code>failed</code> (<code>error</code> is the rejection), or back
-          to <code>open</code> with <code>error</code> after a <code>"Missing files"</code> refusal.
-          The version isn&rsquo;t visible to readers until it is committed.
+          to <code>open</code> with <code>error</code> after a <code>"Missing assets"</code>{' '}
+          refusal. The version isn&rsquo;t visible to readers until it is committed.
         </p>
         <p>A commit can be refused:</p>
         <ul>
@@ -497,8 +497,8 @@ export default function DocsApiVersions() {
             <code>hash</code>.
           </li>
           <li>
-            <code>422</code> <code>"Missing files"</code>: <code>assetsNeeded</code> lists up to 100
-            assets not uploaded, as bare hex. The session stays open: upload them and commit the
+            <code>422</code> <code>"Missing assets"</code>: <code>assetsNeeded</code> lists up to
+            100 assets not uploaded, as bare hex. The session stays open: upload them and commit the
             same session again.
           </li>
           <li>
@@ -659,7 +659,7 @@ export default function DocsApiVersions() {
               </td>
               <td>
                 <code>open</code> (taking uploads; <code>error</code> holds a{' '}
-                <code>"Missing files"</code> refusal, if the last commit had one),{' '}
+                <code>"Missing assets"</code> refusal, if the last commit had one),{' '}
                 <code>committing</code>, <code>committed</code>, <code>failed</code>, or{' '}
                 <code>expired</code> (abandoned, or idle too long).
               </td>
