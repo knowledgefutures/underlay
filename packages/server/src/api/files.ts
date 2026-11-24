@@ -1,6 +1,5 @@
 /**
  * Asset routes (a collection's PDFs, images: `ul:asset:<hex>`), mounted at /api/collections.
- * Each answers at `/assets/…` and at its old path, `/files/…`, which clients still call.
  *
  *   HEAD|GET /:owner/:slug/assets/:hash              302 to a presigned URL (v1 contract); ?fileName= names the download
  *   POST     /:owner/:slug/assets/presign            {hashes} → {hash: url|null} (read-only)
@@ -33,7 +32,6 @@ import {
   startUpload,
   storeSmallFile,
 } from '../files/files.js'
-import { ASSET_SEGMENTS } from '../lib/asset-names.js'
 import { isDenied } from '../lib/limits.js'
 import { v3PresignDownloads, v3ReadableFiles } from '../v3/files.js'
 import { fileSizes } from '../versions/file-refs.js'
@@ -42,232 +40,225 @@ import { jsonError, requireCollection } from './access.js'
 export function fileRoutes() {
   const app = new Hono<AppEnv>()
 
-  // Each route at its asset path and at its old files path, which clients still call.
-  for (const seg of ASSET_SEGMENTS) {
-    // Hono routes HEAD to GET handlers, so one handler serves both.
-    app.get(`/:owner/:slug/${seg}/:hash`, async (c) => {
-      const head = c.req.method === 'HEAD'
-      const access = await requireCollection(c, 'read')
-      if (access instanceof Response) return head ? c.body(null, 404) : access
-      const hash = cleanHash(c.req.param('hash'))
-      if (access.collection.recordLayout === 'v3') {
-        const found = isHash(hash)
-          ? await v3ReadableFiles(c.var.ports, access.collection.id, access.isMember, [hash])
-          : new Map()
-        if (!found.has(hash)) return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
-        if (await isDenied(c.var.ports.db, hash))
-          return head ? c.body(null, 451) : jsonError(c, 451, 'This asset is unavailable')
-        const data = found.get(hash) ?? null
-        const size = data?.size ?? (await fileSizes(c.var.ports.db, [hash])).get(hash) ?? 0
-        if (head)
-          return c.body(null, 200, {
-            'content-length': String(size),
-            'content-type': safeMediaType(data?.mediaType ?? undefined),
-          })
-        meter(c.var.meter, 'file_downloads', 1)
-        meter(c.var.meter, 'file_bytes', size)
-        c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
-        // ?fileName= saves it under the name an asset reference gives it (its `fileName`).
-        const name = fileNameOf(c.req.query('fileName'))
-        const urls = await v3PresignDownloads(
-          c.var.ports,
-          found,
-          PRESIGN_SECONDS,
-          name ? new Map([[hash, name]]) : undefined,
-        )
-        const url = urls.get(hash)
-        return url ? c.redirect(url, 302) : jsonError(c, 404, 'Asset not found')
-      }
-      // Access before the denylist: a 451 would confirm the file exists to anyone.
-      if (
-        !isHash(hash) ||
-        !(await canReadFile(c.var.ports, access.collection, access.isMember, hash))
-      ) {
-        return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
-      }
-      if (await isDenied(c.var.ports.db, hash)) {
+  // Hono routes HEAD to GET handlers, so one handler serves both.
+  app.get('/:owner/:slug/assets/:hash', async (c) => {
+    const head = c.req.method === 'HEAD'
+    const access = await requireCollection(c, 'read')
+    if (access instanceof Response) return head ? c.body(null, 404) : access
+    const hash = cleanHash(c.req.param('hash'))
+    if (access.collection.recordLayout === 'v3') {
+      const found = isHash(hash)
+        ? await v3ReadableFiles(c.var.ports, access.collection.id, access.isMember, [hash])
+        : new Map()
+      if (!found.has(hash)) return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
+      if (await isDenied(c.var.ports.db, hash))
         return head ? c.body(null, 451) : jsonError(c, 451, 'This asset is unavailable')
-      }
-      const [f] = await c.var.ports.db
-        .select()
-        .from(schema.files)
-        .where(eq(schema.files.hash, hash))
-        .limit(1)
-      if (!f) return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
+      const data = found.get(hash) ?? null
+      const size = data?.size ?? (await fileSizes(c.var.ports.db, [hash])).get(hash) ?? 0
       if (head)
-        return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mediaType })
+        return c.body(null, 200, {
+          'content-length': String(size),
+          'content-type': safeMediaType(data?.mediaType ?? undefined),
+        })
       meter(c.var.meter, 'file_downloads', 1)
-      meter(c.var.meter, 'file_bytes', f.size)
-      // The presigned URL lasts PRESIGN_SECONDS: a browser may reuse the redirect until shortly before.
+      meter(c.var.meter, 'file_bytes', size)
       c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
-      return c.redirect((await presignDownload(c.var.ports, hash))!, 302)
-    })
-
-    app.post(`/:owner/:slug/${seg}/presign`, async (c) => {
-      const access = await requireCollection(c, 'read')
-      if (access instanceof Response) return access
-      const body = (await c.req.json().catch(() => null)) as { hashes?: unknown } | null
-      if (!Array.isArray(body?.hashes) || body.hashes.length > 500) {
-        return jsonError(c, 400, '"hashes" must be an array of at most 500 asset hashes')
-      }
-      // The head's trees and the file rows are read once, not per hash (D1: 1,000 queries).
-      const requested = body.hashes.filter((h): h is string => typeof h === 'string')
-      const valid = requested.map(cleanHash).filter(isHash)
-      const urls =
-        access.collection.recordLayout === 'v3'
-          ? await v3PresignDownloads(
-              c.var.ports,
-              await v3ReadableFiles(c.var.ports, access.collection.id, access.isMember, valid),
-              PRESIGN_SECONDS,
-            )
-          : await presignDownloads(c.var.ports, [
-              ...(await readableFiles(c.var.ports, access.collection, access.isMember, valid)),
-            ])
-      const out: Record<string, string | null> = {}
-      for (const r of requested) out[r] = urls.get(cleanHash(r)) ?? null
-      // A presigned URL is a download handed out: metered as one, at the file's size.
-      for (const s of await fileSizes(c.var.ports.db, [...urls.keys()])) {
-        meter(c.var.meter, 'file_downloads', 1)
-        meter(c.var.meter, 'file_bytes', s[1])
-      }
-      return c.json(out)
-    })
-
-    app.put(`/:owner/:slug/${seg}/:hash`, async (c) => {
-      const access = await requireCollection(c, 'write')
-      if (access instanceof Response) return access
-      const hash = cleanHash(c.req.param('hash'))
-      if (!isHash(hash)) return jsonError(c, 400, 'Not a sha256 asset hash')
-      const declared = Number(c.req.header('content-length') ?? NaN)
-      if (declared > SMALL_UPLOAD_BYTES) {
-        return jsonError(
-          c,
-          413,
-          `Uploads through the API are limited to ${SMALL_UPLOAD_BYTES} bytes; use POST .../${seg}/uploads for larger assets`,
-        )
-      }
-      const type = c.req.header('content-type') ?? 'application/octet-stream'
-      let bytes: Uint8Array
-      let mime: string
-      if (type.startsWith('multipart/')) {
-        const form = await c.req.parseBody()
-        // The part is "asset", or "file" as clients first sent it.
-        if (form.asset !== undefined && form.file !== undefined)
-          return jsonError(c, 400, 'Send the multipart part as "asset" or "file", not both')
-        const file = form.asset ?? form.file
-        if (!(file instanceof File)) return jsonError(c, 400, 'No asset in multipart body')
-        bytes = new Uint8Array(await file.arrayBuffer())
-        mime = file.type
-      } else {
-        bytes = new Uint8Array(await c.req.arrayBuffer())
-        mime = type
-      }
-      if (bytes.byteLength > SMALL_UPLOAD_BYTES)
-        return jsonError(c, 413, `Asset exceeds ${SMALL_UPLOAD_BYTES} bytes`)
-      const result = await storeSmallFile(
+      // ?fileName= saves it under the name an asset reference gives it (its `fileName`).
+      const name = fileNameOf(c.req.query('fileName'))
+      const urls = await v3PresignDownloads(
         c.var.ports,
-        access.collection.id,
-        hash,
-        bytes,
-        safeMediaType(mime),
+        found,
+        PRESIGN_SECONDS,
+        name ? new Map([[hash, name]]) : undefined,
       )
-      if (result === 'mismatch') return jsonError(c, 400, 'Hash mismatch', { expected: hash })
-      return c.json({ hash, status: 'stored', size: bytes.byteLength }, 201)
-    })
+      const url = urls.get(hash)
+      return url ? c.redirect(url, 302) : jsonError(c, 404, 'Asset not found')
+    }
+    // Access before the denylist: a 451 would confirm the file exists to anyone.
+    if (
+      !isHash(hash) ||
+      !(await canReadFile(c.var.ports, access.collection, access.isMember, hash))
+    ) {
+      return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
+    }
+    if (await isDenied(c.var.ports.db, hash)) {
+      return head ? c.body(null, 451) : jsonError(c, 451, 'This asset is unavailable')
+    }
+    const [f] = await c.var.ports.db
+      .select()
+      .from(schema.files)
+      .where(eq(schema.files.hash, hash))
+      .limit(1)
+    if (!f) return head ? c.body(null, 404) : jsonError(c, 404, 'Asset not found')
+    if (head)
+      return c.body(null, 200, { 'content-length': String(f.size), 'content-type': f.mediaType })
+    meter(c.var.meter, 'file_downloads', 1)
+    meter(c.var.meter, 'file_bytes', f.size)
+    // The presigned URL lasts PRESIGN_SECONDS: a browser may reuse the redirect until shortly before.
+    c.header('cache-control', `private, max-age=${PRESIGN_SECONDS - 60}`)
+    return c.redirect((await presignDownload(c.var.ports, hash))!, 302)
+  })
 
-    app.post(`/:owner/:slug/${seg}/uploads`, async (c) => {
-      const access = await requireCollection(c, 'write')
-      if (access instanceof Response) return access
-      const body = (await c.req.json().catch(() => null)) as {
-        hash?: unknown
-        size?: unknown
-        mediaType?: unknown
-        /** What CLIs before 2026-11-23 send for `mediaType`: still read, not documented. */
-        mimeType?: unknown
-      } | null
-      const declared = body?.mediaType ?? body?.mimeType
-      const hash = typeof body?.hash === 'string' ? cleanHash(body.hash) : ''
-      const size = Number(body?.size)
-      if (!isHash(hash)) return jsonError(c, 400, '"hash" must be a sha256 asset hash')
-      if (!Number.isSafeInteger(size) || size < 0)
-        return jsonError(c, 400, '"size" must be a byte count')
-      if (size > MAX_FILE_BYTES) return jsonError(c, 413, 'An asset is at most 5 TiB')
-      const ticket = await startUpload(c.var.ports, access.collection.id, {
-        hash,
-        size,
-        mediaType: safeMediaType(typeof declared === 'string' ? declared : undefined),
-      })
-      return c.json(ticket, 201)
-    })
-
-    app.post(`/:owner/:slug/${seg}/uploads/:id/complete`, async (c) => {
-      const access = await requireCollection(c, 'write')
-      if (access instanceof Response) return access
-      const [u] = await c.var.ports.db
-        .select()
-        .from(schema.fileUploads)
-        .where(
-          and(
-            eq(schema.fileUploads.id, c.req.param('id')),
-            eq(schema.fileUploads.collectionId, access.collection.id),
-          ),
-        )
-        .limit(1)
-      if (!u) return jsonError(c, 404, 'Upload not found')
-      const body = ((await c.req.json().catch(() => null)) ?? {}) as { parts?: unknown } | null
-      const parts = body?.parts
-      if (u.multipartUploadId) {
-        const valid =
-          Array.isArray(parts) &&
-          parts.length > 0 &&
-          parts.every(
-            (p) =>
-              Number.isSafeInteger(p?.partNumber) && p.partNumber > 0 && typeof p.etag === 'string',
+  app.post('/:owner/:slug/assets/presign', async (c) => {
+    const access = await requireCollection(c, 'read')
+    if (access instanceof Response) return access
+    const body = (await c.req.json().catch(() => null)) as { hashes?: unknown } | null
+    if (!Array.isArray(body?.hashes) || body.hashes.length > 500) {
+      return jsonError(c, 400, '"hashes" must be an array of at most 500 asset hashes')
+    }
+    // The head's trees and the file rows are read once, not per hash (D1: 1,000 queries).
+    const requested = body.hashes.filter((h): h is string => typeof h === 'string')
+    const valid = requested.map(cleanHash).filter(isHash)
+    const urls =
+      access.collection.recordLayout === 'v3'
+        ? await v3PresignDownloads(
+            c.var.ports,
+            await v3ReadableFiles(c.var.ports, access.collection.id, access.isMember, valid),
+            PRESIGN_SECONDS,
           )
-        if (!valid) return jsonError(c, 400, 'parts is required for a multipart upload')
-      }
-      await completeUpload(c.var.ports, u, parts as { partNumber: number; etag: string }[])
-      return c.json({ id: u.id, status: 'verifying' }, 202)
-    })
+        : await presignDownloads(c.var.ports, [
+            ...(await readableFiles(c.var.ports, access.collection, access.isMember, valid)),
+          ])
+    const out: Record<string, string | null> = {}
+    for (const r of requested) out[r] = urls.get(cleanHash(r)) ?? null
+    // A presigned URL is a download handed out: metered as one, at the file's size.
+    for (const s of await fileSizes(c.var.ports.db, [...urls.keys()])) {
+      meter(c.var.meter, 'file_downloads', 1)
+      meter(c.var.meter, 'file_bytes', s[1])
+    }
+    return c.json(out)
+  })
 
-    app.get(`/:owner/:slug/${seg}/uploads/:id/parts`, async (c) => {
-      const access = await requireCollection(c, 'write')
-      if (access instanceof Response) return access
-      const from = Number(c.req.query('from') ?? 1)
-      if (!Number.isSafeInteger(from) || from < 1)
-        return jsonError(c, 400, '"from" is a part number')
-      const [u] = await c.var.ports.db
-        .select()
-        .from(schema.fileUploads)
-        .where(
-          and(
-            eq(schema.fileUploads.id, c.req.param('id')),
-            eq(schema.fileUploads.collectionId, access.collection.id),
-            eq(schema.fileUploads.status, 'pending'),
-          ),
-        )
-        .limit(1)
-      if (!u || !u.multipartUploadId) return jsonError(c, 404, 'Upload not found')
-      return c.json({ parts: await presignParts(c.var.ports, u, from) })
-    })
+  app.put('/:owner/:slug/assets/:hash', async (c) => {
+    const access = await requireCollection(c, 'write')
+    if (access instanceof Response) return access
+    const hash = cleanHash(c.req.param('hash'))
+    if (!isHash(hash)) return jsonError(c, 400, 'Not a sha256 asset hash')
+    const declared = Number(c.req.header('content-length') ?? NaN)
+    if (declared > SMALL_UPLOAD_BYTES) {
+      return jsonError(
+        c,
+        413,
+        `Uploads through the API are limited to ${SMALL_UPLOAD_BYTES} bytes; use POST .../assets/uploads for larger assets`,
+      )
+    }
+    const type = c.req.header('content-type') ?? 'application/octet-stream'
+    let bytes: Uint8Array
+    let mime: string
+    if (type.startsWith('multipart/')) {
+      const form = await c.req.parseBody()
+      const file = form.asset
+      if (!(file instanceof File)) return jsonError(c, 400, 'No asset in multipart body')
+      bytes = new Uint8Array(await file.arrayBuffer())
+      mime = file.type
+    } else {
+      bytes = new Uint8Array(await c.req.arrayBuffer())
+      mime = type
+    }
+    if (bytes.byteLength > SMALL_UPLOAD_BYTES)
+      return jsonError(c, 413, `Asset exceeds ${SMALL_UPLOAD_BYTES} bytes`)
+    const result = await storeSmallFile(
+      c.var.ports,
+      access.collection.id,
+      hash,
+      bytes,
+      safeMediaType(mime),
+    )
+    if (result === 'mismatch') return jsonError(c, 400, 'Hash mismatch', { expected: hash })
+    return c.json({ hash, status: 'stored', size: bytes.byteLength }, 201)
+  })
 
-    app.get(`/:owner/:slug/${seg}/uploads/:id`, async (c) => {
-      const access = await requireCollection(c, 'write')
-      if (access instanceof Response) return access
-      const [u] = await c.var.ports.db
-        .select()
-        .from(schema.fileUploads)
-        .where(
-          and(
-            eq(schema.fileUploads.id, c.req.param('id')),
-            eq(schema.fileUploads.collectionId, access.collection.id),
-          ),
-        )
-        .limit(1)
-      if (!u) return jsonError(c, 404, 'Upload not found')
-      return c.json({ id: u.id, hash: u.hash, size: u.size, status: u.status, error: u.error })
+  app.post('/:owner/:slug/assets/uploads', async (c) => {
+    const access = await requireCollection(c, 'write')
+    if (access instanceof Response) return access
+    const body = (await c.req.json().catch(() => null)) as {
+      hash?: unknown
+      size?: unknown
+      mediaType?: unknown
+      /** What CLIs before 2026-11-23 send for `mediaType`: still read, not documented. */
+      mimeType?: unknown
+    } | null
+    const declared = body?.mediaType ?? body?.mimeType
+    const hash = typeof body?.hash === 'string' ? cleanHash(body.hash) : ''
+    const size = Number(body?.size)
+    if (!isHash(hash)) return jsonError(c, 400, '"hash" must be a sha256 asset hash')
+    if (!Number.isSafeInteger(size) || size < 0)
+      return jsonError(c, 400, '"size" must be a byte count')
+    if (size > MAX_FILE_BYTES) return jsonError(c, 413, 'An asset is at most 5 TiB')
+    const ticket = await startUpload(c.var.ports, access.collection.id, {
+      hash,
+      size,
+      mediaType: safeMediaType(typeof declared === 'string' ? declared : undefined),
     })
-  }
+    return c.json(ticket, 201)
+  })
+
+  app.post('/:owner/:slug/assets/uploads/:id/complete', async (c) => {
+    const access = await requireCollection(c, 'write')
+    if (access instanceof Response) return access
+    const [u] = await c.var.ports.db
+      .select()
+      .from(schema.fileUploads)
+      .where(
+        and(
+          eq(schema.fileUploads.id, c.req.param('id')),
+          eq(schema.fileUploads.collectionId, access.collection.id),
+        ),
+      )
+      .limit(1)
+    if (!u) return jsonError(c, 404, 'Upload not found')
+    const body = ((await c.req.json().catch(() => null)) ?? {}) as { parts?: unknown } | null
+    const parts = body?.parts
+    if (u.multipartUploadId) {
+      const valid =
+        Array.isArray(parts) &&
+        parts.length > 0 &&
+        parts.every(
+          (p) =>
+            Number.isSafeInteger(p?.partNumber) && p.partNumber > 0 && typeof p.etag === 'string',
+        )
+      if (!valid) return jsonError(c, 400, 'parts is required for a multipart upload')
+    }
+    await completeUpload(c.var.ports, u, parts as { partNumber: number; etag: string }[])
+    return c.json({ id: u.id, status: 'verifying' }, 202)
+  })
+
+  app.get('/:owner/:slug/assets/uploads/:id/parts', async (c) => {
+    const access = await requireCollection(c, 'write')
+    if (access instanceof Response) return access
+    const from = Number(c.req.query('from') ?? 1)
+    if (!Number.isSafeInteger(from) || from < 1) return jsonError(c, 400, '"from" is a part number')
+    const [u] = await c.var.ports.db
+      .select()
+      .from(schema.fileUploads)
+      .where(
+        and(
+          eq(schema.fileUploads.id, c.req.param('id')),
+          eq(schema.fileUploads.collectionId, access.collection.id),
+          eq(schema.fileUploads.status, 'pending'),
+        ),
+      )
+      .limit(1)
+    if (!u || !u.multipartUploadId) return jsonError(c, 404, 'Upload not found')
+    return c.json({ parts: await presignParts(c.var.ports, u, from) })
+  })
+
+  app.get('/:owner/:slug/assets/uploads/:id', async (c) => {
+    const access = await requireCollection(c, 'write')
+    if (access instanceof Response) return access
+    const [u] = await c.var.ports.db
+      .select()
+      .from(schema.fileUploads)
+      .where(
+        and(
+          eq(schema.fileUploads.id, c.req.param('id')),
+          eq(schema.fileUploads.collectionId, access.collection.id),
+        ),
+      )
+      .limit(1)
+    if (!u) return jsonError(c, 404, 'Upload not found')
+    return c.json({ id: u.id, hash: u.hash, size: u.size, status: u.status, error: u.error })
+  })
 
   return app
 }

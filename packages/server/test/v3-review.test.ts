@@ -47,7 +47,7 @@ async function sendFiles(h: Harness, user: string, base: string, files: Built[])
   const id = opened.upload_id as string
   for (const f of files) {
     const res = await json(
-      await h.request(`${base}/uploads/${id}/files`, {
+      await h.request(`${base}/uploads/${id}/record-files`, {
         method: 'POST',
         user,
         json: { id: f.ref.id, size: f.bytes.byteLength },
@@ -64,7 +64,7 @@ const commit = (h: Harness, user: string, base: string, id: string, body: object
 /** Send files and commit them; the upload's status once its jobs have run. */
 async function upload(h: Harness, user: string, base: string, files: Built[]) {
   const id = await sendFiles(h, user, base, files)
-  await commit(h, user, base, id, { files: files.map((f) => f.ref) })
+  await commit(h, user, base, id, { record_files: files.map((f) => f.ref) })
   await h.drain()
   const status = await json(await h.request(`${base}/uploads/${id}`, { user }))
   return { ...status, id } as Record<string, any>
@@ -96,7 +96,7 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
       return head(key)
     }
     try {
-      await commit(h, user, base, id, { files: [good!.ref] })
+      await commit(h, user, base, id, { record_files: [good!.ref] })
       await h.drain()
     } finally {
       h.bucket.head = head
@@ -136,7 +136,9 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
       }))
       expect(files.length).toBeGreaterThan(4)
       const id = await sendFiles(h, user, base, files)
-      expect((await commit(h, user, base, id, { files: files.map((f) => f.ref) })).status).toBe(202)
+      expect(
+        (await commit(h, user, base, id, { record_files: files.map((f) => f.ref) })).status,
+      ).toBe(202)
       // One slice copied and claimed; then the client sends other bytes for that file, and the
       // slice's job is delivered again: the claimed copy is the one checked and installed.
       const first = files[1]!
@@ -212,7 +214,7 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
       v3.rowFromRecord(hash, v3.ASSET_TYPE, { size, mediaType: 'application/pdf' }),
     ]
     // One collection holds the asset.
-    await h.request(`${base}/files/${hash}`, { method: 'PUT', user, body: bytes })
+    await h.request(`${base}/assets/${hash}`, { method: 'PUT', user, body: bytes })
     expect(await upload(h, user, base, await build(asset(bytes.length)))).toMatchObject({
       status: 'committed',
     })
@@ -224,10 +226,10 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
       status: 'open',
       error: { error: 'Missing files', problems: [hash] },
     })
-    expect((await h.request(`${other}/files/${hash}`, { user })).status).toBe(404)
+    expect((await h.request(`${other}/assets/${hash}`, { user })).status).toBe(404)
     // Once it has sent them, the same commit lands.
-    await h.request(`${other}/files/${hash}`, { method: 'PUT', user, body: bytes })
-    await commit(h, user, other, up.id, { files: files.map((f) => f.ref) })
+    await h.request(`${other}/assets/${hash}`, { method: 'PUT', user, body: bytes })
+    await commit(h, user, other, up.id, { record_files: files.map((f) => f.ref) })
     await h.drain()
     expect(await json(await h.request(`${other}/uploads/${up.id}`, { user }))).toMatchObject({
       status: 'committed',
@@ -253,13 +255,13 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     const { h, user, base } = await setup()
     const bytes = '<script>alert(1)</script>'
     const hash = sha(bytes)
-    await h.request(`${base}/files/${hash}`, { method: 'PUT', user, body: bytes })
+    await h.request(`${base}/assets/${hash}`, { method: 'PUT', user, body: bytes })
     const rows = [
       v3.rowFromRecord('Author', v3.SCHEMA_TYPE, Author),
       v3.rowFromRecord(hash, v3.ASSET_TYPE, { size: bytes.length, mediaType: 'text/html' }),
     ]
     expect(await upload(h, user, base, await build(rows))).toMatchObject({ status: 'committed' })
-    const headRes = await h.request(`${base}/files/${hash}`, { method: 'HEAD', user })
+    const headRes = await h.request(`${base}/assets/${hash}`, { method: 'HEAD', user })
     expect(headRes.headers.get('content-type')).toBe('application/octet-stream')
     const presigner = h.ports.stores.fileBytes.presigner
     const presignGet = presigner.presignGet
@@ -269,7 +271,7 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
       return presignGet(key, opts)
     }
     try {
-      expect((await h.request(`${base}/files/${hash}`, { user })).status).toBe(302)
+      expect((await h.request(`${base}/assets/${hash}`, { user })).status).toBe(302)
     } finally {
       presigner.presignGet = presignGet
     }
@@ -284,9 +286,9 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     const post = (path: string, body: object) =>
       h.request(`${base}/uploads/${id}${path}`, { method: 'POST', user, json: body })
     // A file past the largest taken: no presigned parts by the hundred thousand.
-    expect((await post('/files', { id: ref.id, size: uploadLimits.maxFileBytes + 1 })).status).toBe(
-      400,
-    )
+    expect(
+      (await post('/record-files', { id: ref.id, size: uploadLimits.maxFileBytes + 1 })).status,
+    ).toBe(400)
     // A completion's parts are numbers and ETags.
     for (const parts of [
       [],
@@ -294,20 +296,26 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
       [{ n: 1 }],
       [{ n: 0, etag: 'x' }],
     ])
-      expect((await post(`/files/${ref.id}/complete`, { upload_id: 'u', parts })).status).toBe(400)
+      expect(
+        (await post(`/record-files/${ref.id}/complete`, { upload_id: 'u', parts })).status,
+      ).toBe(400)
     // A commit names each file once, with its keys, and nothing rides along.
-    expect((await post('/commit', { files: [ref, ref] })).status).toBe(400)
-    expect((await post('/commit', { files: [{ ...ref, first: undefined }] })).status).toBe(400)
-    expect((await post('/commit', { files: [{ ...ref, first: 'ab', last: 'cd' }] })).status).toBe(
+    expect((await post('/commit', { record_files: [ref, ref] })).status).toBe(400)
+    expect((await post('/commit', { record_files: [{ ...ref, first: undefined }] })).status).toBe(
       400,
     )
+    expect(
+      (await post('/commit', { record_files: [{ ...ref, first: 'ab', last: 'cd' }] })).status,
+    ).toBe(400)
     // A change with a key id nobody verified is refused; an unsigned one is taken.
     const change = { collection: c.id, files: [ref], base: null, message: 'by hand' }
     expect(
-      (await post('/commit', { files: [ref], change: { ...change, keyId: 'k', sig: 's' } })).status,
+      (await post('/commit', { record_files: [ref], change: { ...change, keyId: 'k', sig: 's' } }))
+        .status,
     ).toBe(400)
     expect(
-      (await post('/commit', { files: [{ ...ref, extra: 'x'.repeat(1000) }], change })).status,
+      (await post('/commit', { record_files: [{ ...ref, extra: 'x'.repeat(1000) }], change }))
+        .status,
     ).toBe(201)
     const [row] = await h.ports.db
       .select()

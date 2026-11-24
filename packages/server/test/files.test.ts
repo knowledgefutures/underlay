@@ -24,13 +24,13 @@ describe('files', () => {
     await h.collection('docs')
     const base = '/api/collections/org/docs'
     const bytes = 'hello file'
-    let res = await h.request(`${base}/files/${'0'.repeat(64)}`, {
+    let res = await h.request(`${base}/assets/${'0'.repeat(64)}`, {
       method: 'PUT',
       user,
       body: bytes,
     })
     expect(res.status).toBe(400)
-    res = await h.request(`${base}/files/sha256:${sha(bytes)}`, {
+    res = await h.request(`${base}/assets/sha256:${sha(bytes)}`, {
       method: 'PUT',
       user,
       body: bytes,
@@ -54,20 +54,24 @@ describe('files', () => {
     await h.collection('docs')
     const base = '/api/collections/org/docs'
     const start = (size: number) =>
-      h.request(`${base}/files/uploads`, { method: 'POST', user, json: { hash: sha('big'), size } })
+      h.request(`${base}/assets/uploads`, {
+        method: 'POST',
+        user,
+        json: { hash: sha('big'), size },
+      })
     const GiB = 1024 ** 3
     const big = await json(await start(50 * GiB))
     expect(big).toMatchObject({ partBytes: 100 * 1024 ** 2, partCount: 512 })
     expect(big.parts).toHaveLength(100)
     expect(big.parts[99].partNumber).toBe(100)
     const next = await json(
-      await h.request(`${base}/files/uploads/${big.id}/parts?from=101`, { user }),
+      await h.request(`${base}/assets/uploads/${big.id}/parts?from=101`, { user }),
     )
     expect(next.parts.map((p: { partNumber: number }) => p.partNumber)).toEqual(
       Array.from({ length: 100 }, (_, i) => 101 + i),
     )
     const tail = await json(
-      await h.request(`${base}/files/uploads/${big.id}/parts?from=501`, { user }),
+      await h.request(`${base}/assets/uploads/${big.id}/parts?from=501`, { user }),
     )
     expect(tail.parts).toHaveLength(12)
     // The largest file takes bigger parts, never more than 10,000 of them.
@@ -84,7 +88,7 @@ describe('files', () => {
     await h.collection('docs')
     const base = '/api/collections/org/docs'
     const good = new TextEncoder().encode('x'.repeat(100_000))
-    let res = await h.request(`${base}/files/uploads`, {
+    let res = await h.request(`${base}/assets/uploads`, {
       method: 'POST',
       user,
       json: { hash: sha(good), size: good.length, mediaType: 'application/pdf' },
@@ -94,7 +98,7 @@ describe('files', () => {
     expect(ticket.url).toBeTruthy()
     // The client PUTs to the presigned URL; in tests, write the staging key directly.
     await h.bucket.put(`internal/uploads/${ticket.id}`, good)
-    res = await h.request(`${base}/files/uploads/${ticket.id}/complete`, {
+    res = await h.request(`${base}/assets/uploads/${ticket.id}/complete`, {
       method: 'POST',
       user,
       json: {},
@@ -102,7 +106,7 @@ describe('files', () => {
     expect(res.status).toBe(202)
     await h.drain()
     expect(
-      (await json(await h.request(`${base}/files/uploads/${ticket.id}`, { user }))).status,
+      (await json(await h.request(`${base}/assets/uploads/${ticket.id}`, { user }))).status,
     ).toBe('verified')
     expect(h.bucket.objects.has(`repo/files/${sha(good)}`)).toBe(true)
     expect(h.bucket.objects.has(`internal/uploads/${ticket.id}`)).toBe(false)
@@ -112,7 +116,7 @@ describe('files', () => {
     // the upload is read are not what is stored under the hash.
     const honest = new TextEncoder().encode('y'.repeat(50_000))
     const swap = await json(
-      await h.request(`${base}/files/uploads`, {
+      await h.request(`${base}/assets/uploads`, {
         method: 'POST',
         user,
         json: { hash: sha(honest), size: honest.length },
@@ -120,7 +124,11 @@ describe('files', () => {
     )
     const staging = `internal/uploads/${swap.id}`
     await h.bucket.put(staging, honest)
-    await h.request(`${base}/files/uploads/${swap.id}/complete`, { method: 'POST', user, json: {} })
+    await h.request(`${base}/assets/uploads/${swap.id}/complete`, {
+      method: 'POST',
+      user,
+      json: {},
+    })
     const get = h.bucket.get.bind(h.bucket)
     let swapped = false
     h.bucket.get = async (key, range) => {
@@ -143,16 +151,16 @@ describe('files', () => {
 
     // Bytes that don't match the declared hash are refused and removed.
     const bad = await json(
-      await h.request(`${base}/files/uploads`, {
+      await h.request(`${base}/assets/uploads`, {
         method: 'POST',
         user,
         json: { hash: sha('other'), size: 3 },
       }),
     )
     await h.bucket.put(`internal/uploads/${bad.id}`, 'abc')
-    await h.request(`${base}/files/uploads/${bad.id}/complete`, { method: 'POST', user, json: {} })
+    await h.request(`${base}/assets/uploads/${bad.id}/complete`, { method: 'POST', user, json: {} })
     await h.drain()
-    const status = await json(await h.request(`${base}/files/uploads/${bad.id}`, { user }))
+    const status = await json(await h.request(`${base}/assets/uploads/${bad.id}`, { user }))
     expect(status).toMatchObject({ status: 'failed' })
     expect(status.error).toMatch(/Hash mismatch/)
     expect(
@@ -174,7 +182,7 @@ describe('files', () => {
     const elsewhere = 'bytes only collection v has'
     expect(
       (
-        await h.request(`/api/collections/org/v/files/${sha(elsewhere)}`, {
+        await h.request(`/api/collections/org/v/assets/${sha(elsewhere)}`, {
           method: 'PUT',
           user,
           body: elsewhere,
@@ -202,15 +210,20 @@ describe('files', () => {
     // Same refusal either way: the answer says nothing about other collections.
     expect(existing.status).toBe(422)
     expect(existing).toEqual(nowhere)
-    expect((await h.request(`${base}/files/${sha(elsewhere)}`)).status).toBe(404)
+    expect((await h.request(`${base}/assets/${sha(elsewhere)}`)).status).toBe(404)
 
     // Uploading the bytes under this collection is the proof that lets it commit.
     expect(
-      (await h.request(`${base}/files/${sha(elsewhere)}`, { method: 'PUT', user, body: elsewhere }))
-        .status,
+      (
+        await h.request(`${base}/assets/${sha(elsewhere)}`, {
+          method: 'PUT',
+          user,
+          body: elsewhere,
+        })
+      ).status,
     ).toBe(201)
     expect((await attempt(sha(elsewhere))).status).toBe(201)
-    expect((await h.request(`${base}/files/${sha(elsewhere)}`)).status).toBe(302)
+    expect((await h.request(`${base}/assets/${sha(elsewhere)}`)).status).toBe(302)
   })
 
   it('completes a multipart upload only with its parts', async () => {
@@ -219,7 +232,7 @@ describe('files', () => {
     await h.collection('docs')
     const base = '/api/collections/org/docs'
     const ticket = await json(
-      await h.request(`${base}/files/uploads`, {
+      await h.request(`${base}/assets/uploads`, {
         method: 'POST',
         user,
         json: { hash: sha('big'), size: 6 * 1024 ** 3 },
@@ -227,14 +240,18 @@ describe('files', () => {
     )
     expect(ticket.partCount).toBeGreaterThan(1)
     const complete = (body: unknown) =>
-      h.request(`${base}/files/uploads/${ticket.id}/complete`, { method: 'POST', user, json: body })
+      h.request(`${base}/assets/uploads/${ticket.id}/complete`, {
+        method: 'POST',
+        user,
+        json: body,
+      })
     for (const body of [{}, { parts: [] }, { parts: [{ partNumber: 'x', etag: 1 }] }]) {
       const res = await complete(body)
       expect(res.status).toBe(400)
       expect((await json(res)).error).toBe('parts is required for a multipart upload')
     }
     expect(
-      (await json(await h.request(`${base}/files/uploads/${ticket.id}`, { user }))).status,
+      (await json(await h.request(`${base}/assets/uploads/${ticket.id}`, { user }))).status,
     ).toBe('pending')
   })
 
@@ -249,7 +266,7 @@ describe('files', () => {
       const old = 'private bytes of an earlier version'
       const staged = 'uploaded, not yet in any version'
       for (const b of [old, staged]) {
-        await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })
+        await h.request(`${base}/assets/${sha(b)}`, { method: 'PUT', user, body: b })
       }
       const push = async (ndjson: unknown[], deletes?: unknown[]) => {
         const sid = (
@@ -273,12 +290,12 @@ describe('files', () => {
       expect(await push([], [{ type: 'Doc', id: 'p' }])).toBe(201)
 
       for (const b of [old, staged]) {
-        expect((await h.request(`${base}/files/${sha(b)}`, { user })).status).toBe(302)
-        expect((await h.request(`${base}/files/${sha(b)}`)).status).toBe(404)
+        expect((await h.request(`${base}/assets/${sha(b)}`, { user })).status).toBe(302)
+        expect((await h.request(`${base}/assets/${sha(b)}`)).status).toBe(404)
       }
       const presign = async (u?: string) =>
         json(
-          await h.request(`${base}/files/presign`, {
+          await h.request(`${base}/assets/presign`, {
             method: 'POST',
             ...(u ? { user: u } : {}),
             json: { hashes: [sha(old), sha(staged)] },
@@ -317,7 +334,7 @@ describe('files', () => {
       const priv = 'private pdf bytes'
       for (const b of [pub, priv]) {
         expect(
-          (await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })).status,
+          (await h.request(`${base}/assets/${sha(b)}`, { method: 'PUT', user, body: b })).status,
         ).toBe(201)
       }
       const sid = (
@@ -353,21 +370,21 @@ describe('files', () => {
         201,
       )
 
-      const anonPub = await h.request(`${base}/files/${sha(pub)}`)
+      const anonPub = await h.request(`${base}/assets/${sha(pub)}`)
       expect(anonPub.status).toBe(302)
       expect(anonPub.headers.get('location')).toContain(`repo/files/${sha(pub)}`)
-      expect((await h.request(`${base}/files/${sha(priv)}`)).status).toBe(404)
-      expect((await h.request(`${base}/files/${sha(priv)}`, { user })).status).toBe(302)
+      expect((await h.request(`${base}/assets/${sha(priv)}`)).status).toBe(404)
+      expect((await h.request(`${base}/assets/${sha(priv)}`, { user })).status).toBe(302)
       expect(
-        (await h.request(`${base}/files/${sha(pub)}`, { method: 'HEAD' })).headers.get(
+        (await h.request(`${base}/assets/${sha(pub)}`, { method: 'HEAD' })).headers.get(
           'content-length',
         ),
       ).toBe(String(pub.length))
 
       // The files listing follows the same sets.
-      const anonList = await json(await h.request(`${base}/versions/latest/files`))
+      const anonList = await json(await h.request(`${base}/versions/latest/assets`))
       expect(anonList.map((f: any) => f.hash)).toEqual([sha(pub)])
-      const ownerList = await json(await h.request(`${base}/versions/latest/files`, { user }))
+      const ownerList = await json(await h.request(`${base}/versions/latest/assets`, { user }))
       expect(ownerList.length).toBe(2)
       // Reference counts follow the sets too: private references only for members.
       const countsOf = (list: any[]) =>
@@ -389,7 +406,7 @@ describe('files', () => {
     await h.ports.db.update(schema.collections).set({ public: true })
     const base = '/api/collections/org/docs'
     const pdf = 'large record pdf'
-    await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+    await h.request(`${base}/assets/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
     const big = (title: string) => ({
       id: 'big',
       type: 'Doc',
@@ -408,7 +425,7 @@ describe('files', () => {
       return json(res)
     }
     const files = async () =>
-      (await json(await h.request(`${base}/versions/latest/files`))).map((f: any) => f.hash)
+      (await json(await h.request(`${base}/versions/latest/assets`))).map((f: any) => f.hash)
 
     await push({ schemas: { Doc } }, [big('First')])
     expect(await files()).toEqual([sha(pdf)])

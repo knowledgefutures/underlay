@@ -1,6 +1,6 @@
 {
   "underlay": 3,
-  "note": "Sections 2.1 to 2.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`, and the older `$file`).",
+  "note": "Sections 2.1 to 2.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`; a `$file` is refused and not read).",
   "ids": [
     {
       "input": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -164,15 +164,8 @@
         }
       },
       "problem": "$file at /pdf is not read: attach an asset with {\"$asset\": \"ul:asset:<hex>\"}",
-      "links": [
-        {
-          "kind": "asset",
-          "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "path": "/pdf",
-          "attached": true
-        }
-      ],
-      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+      "links": [],
+      "assets": []
     },
     {
       "data": {
@@ -336,18 +329,9 @@
           "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "path": "/figures/0",
           "attached": true
-        },
-        {
-          "kind": "asset",
-          "hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-          "path": "/figures/1",
-          "attached": true
         }
       ],
-      "assets": [
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-      ]
+      "assets": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
     },
     {
       "data": {

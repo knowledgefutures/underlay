@@ -64,7 +64,6 @@ export const pushLimits = (session: Pick<SessionRow, 'inKeyOrder'> = { inKeyOrde
   batch_lines: batchLimits(session).lines,
   session_idle_seconds: SESSION_TTL_MS / 1000,
   open_sessions: limits.openSessions,
-  file_bytes: SMALL_UPLOAD_BYTES,
   asset_bytes: SMALL_UPLOAD_BYTES,
 })
 
@@ -397,10 +396,9 @@ export function pushRoutes() {
         : patch
           ? { ...(base.metadata ?? {}), ...patch }
           : base.metadata
-    // The assets the version keeps: "assets", or "files" as clients first sent it.
-    if (body.assets !== undefined && body.files !== undefined)
-      return jsonError(c, 400, 'Send "assets" or "files", not both')
-    const files = (body.assets ?? body.files ?? {}) as { add?: unknown; remove?: unknown }
+    // "files" was this field's first name: refused, so a client sending it doesn't lose them.
+    if (body.files !== undefined) return jsonError(c, 400, 'Name the assets "assets", not "files"')
+    const files = (body.assets ?? {}) as { add?: unknown; remove?: unknown }
     const hexList = (v: unknown) =>
       Array.isArray(v)
         ? v.filter((h): h is string => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h))
@@ -426,17 +424,15 @@ export function pushRoutes() {
       },
       inputs,
     )
-    const needed = await neededFiles(
-      c,
-      access,
-      head?.hash ?? null,
-      inputs.files && 'add' in inputs.files ? inputs.files.add : [],
-    )
     return c.json({
       session_id: session.id,
       base: head?.semver ?? null,
-      needed_files: needed,
-      needed_assets: needed,
+      needed_assets: await neededFiles(
+        c,
+        access,
+        head?.hash ?? null,
+        inputs.files && 'add' in inputs.files ? inputs.files.add : [],
+      ),
       expires_at: session.expiresAt,
       in_key_order: session.inKeyOrder,
       limits: pushLimits(session),

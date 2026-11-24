@@ -168,7 +168,6 @@ export async function enqueueDeliveries(
       minor: row.v.minor,
       patch: row.v.patch,
       recordCount: row.v.recordCount,
-      fileCount: row.v.fileCount,
       assetCount: row.v.fileCount,
     },
     bumpType: bump,

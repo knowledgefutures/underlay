@@ -330,7 +330,7 @@ export async function push(
     }
     say(`  ${s.commit.semver}: sent ${sent} of ${files.length} record files; committing`)
     const st = await remote.commitUpload(org, name, up.upload_id, {
-      files,
+      record_files: files,
       commit: new TextDecoder().decode(s.bytes),
     })
     if (st.status === 'failed' && st.error?.statusCode === 409 && st.error.latest !== undefined) {

@@ -495,9 +495,8 @@ export async function runScript(
       record.status = cancelled ? 'cancelled' : 'failed'
       record.error = cancelled ? 'Cancelled' : `Exited with ${code ?? 'a signal'}`
     } else {
-      // The assets it wrote, for the records that attach them: in assets/, or files/ as runs
-      // wrote them before 2026-11-22.
-      const written = new Map([...runFiles(join(out, 'files')), ...runFiles(join(out, 'assets'))])
+      // The assets it wrote, in assets/, for the records that attach them.
+      const written = runFiles(join(out, 'assets'))
       const used = new Set<string>()
       // Each collection it wrote, compared with the head.
       for (const key of outputsOf(out)) {

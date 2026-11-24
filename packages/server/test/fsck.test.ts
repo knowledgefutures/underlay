@@ -27,7 +27,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('fsck', () => 
     const c = await h.collection('docs')
     const base = '/api/collections/org/docs'
     const pdf = 'pdf bytes'
-    await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+    await h.request(`${base}/assets/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
     for (const [i, records] of [
       [
         0,

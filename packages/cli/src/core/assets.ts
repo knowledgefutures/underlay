@@ -196,8 +196,8 @@ export const mediaOf = (path: string) => MEDIA[extname(path).toLowerCase()] ?? n
 
 /**
  * The assets a record attaches: any object in its data, at any depth, whose `$asset` is
- * `ul:asset:<64 lowercase hex>` (or whose `$file` is `sha256:<hex>`, as records wrote it before
- * 2026-11-22), with the field it sits under. A `$link` object only points, so it is skipped.
+ * `ul:asset:<64 lowercase hex>`, with the field it sits under. A `$link` object only points,
+ * so it is skipped.
  */
 export function assetRefsIn(data: unknown, field = ''): { hash: string; field: string }[] {
   const out: { hash: string; field: string }[] = []

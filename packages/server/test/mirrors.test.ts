@@ -143,7 +143,7 @@ async function setup(storage: Parameters<typeof harness>[0] = {}) {
   const path = '/api/collections/org/books'
   const cover = 'cover bytes'
   expect(
-    (await h.request(`${path}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })).status,
+    (await h.request(`${path}/assets/${sha(cover)}`, { method: 'PUT', user, body: cover })).status,
   ).toBe(201)
   const v1 = await push(h, user, path, { schemas: { Book } }, [
     ...Array.from({ length: 2500 }, (_, i) => book(`b${i}`, `T${i}`)),
@@ -671,7 +671,8 @@ describe.skipIf(!onV3)('bucket mirrors of v3 collections', () => {
     const path = '/api/collections/org/books'
     const cover = 'cover bytes'
     expect(
-      (await h.request(`${path}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })).status,
+      (await h.request(`${path}/assets/${sha(cover)}`, { method: 'PUT', user, body: cover }))
+        .status,
     ).toBe(201)
     await push(h, user, path, { schemas: { Book } }, [
       ...Array.from({ length: 2500 }, (_, i) => book(`b${i}`, `T${i}`)),

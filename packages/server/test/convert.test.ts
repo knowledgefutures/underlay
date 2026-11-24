@@ -62,7 +62,7 @@ async function v2Collection(opts: { private?: boolean } = {}) {
   const base = '/api/collections/org/lib'
   const file = 'pdf bytes'
   const fileHash = createHash('sha256').update(file).digest('hex')
-  await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
+  await h.request(`${base}/assets/${fileHash}`, { method: 'PUT', user, body: file })
   await push(h, user, base, { schemas: { Author, Book }, metadata: { title: 'Library' } }, [
     { id: 'a1', type: 'Author', data: { name: 'Ada' } },
     { id: 'a2', type: 'Author', data: { name: 'Bo' }, ...(opts.private ? { private: true } : {}) },
@@ -106,7 +106,7 @@ async function snapshot(h: Harness, base: string, user: string) {
       for (const r of page.records ?? [])
         records.push({ id: r.id, type: r.type, data: r.data, hash: r.hash })
     }
-    const files = await json(await h.request(`${base}/versions/${semver}/files`, { user }))
+    const files = await json(await h.request(`${base}/versions/${semver}/assets`, { user }))
     out[semver] = {
       recordCount: detail.recordCount,
       metadata: detail.metadata,

@@ -191,7 +191,6 @@ describe('delta push', () => {
       batch_lines: 10_000,
       session_idle_seconds: 43_200,
       open_sessions: 20,
-      file_bytes: 32 * 1024 * 1024,
       asset_bytes: 32 * 1024 * 1024,
     })
     let sid = opened.session_id
@@ -360,7 +359,7 @@ describe('delta push', () => {
       JSON.stringify({
         schemas: { Author, Bad: { type: 'text' } },
         metadata: null,
-        files: { add: [], remove: [] },
+        assets: { add: [], remove: [] },
       }),
     )
     let res = await h.request(`${base}/push/${sid}/records`, {
@@ -457,7 +456,7 @@ describe('delta push', () => {
     const uploaded = 'uploaded to this collection'
     const missing = 'never uploaded'
     expect(
-      (await h.request(`${base}/files/${sha(uploaded)}`, { method: 'PUT', user, body: uploaded }))
+      (await h.request(`${base}/assets/${sha(uploaded)}`, { method: 'PUT', user, body: uploaded }))
         .status,
     ).toBe(201)
     const open = async (add: string[]) =>
@@ -465,21 +464,21 @@ describe('delta push', () => {
         await h.request(`${base}/push`, {
           method: 'POST',
           user,
-          json: { schemas: { Author }, files: { add } },
+          json: { schemas: { Author }, assets: { add } },
         }),
       )
     let opened = await open([sha(uploaded), sha(missing), sha(missing)])
     // The upload (a verified file_uploads row) counts, as it does at commit.
-    expect(opened.needed_files).toEqual([sha(missing)])
+    expect(opened.needed_assets).toEqual([sha(missing)])
     let res = await h.request(`${base}/push/${opened.session_id}/commit`, {
       method: 'POST',
       user,
     })
     expect(res.status).toBe(422)
-    expect(await json(res)).toMatchObject({ error: 'Missing files', filesNeeded: [sha(missing)] })
+    expect(await json(res)).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(missing)] })
 
     opened = await open([sha(uploaded)])
-    expect(opened.needed_files).toEqual([])
+    expect(opened.needed_assets).toEqual([])
     res = await h.request(`${base}/push/${opened.session_id}/commit`, { method: 'POST', user })
     expect(res.status).toBe(201)
   })
@@ -592,11 +591,11 @@ describe('push sessions settle once', () => {
         await h.request(`${base}/push`, {
           method: 'POST',
           user,
-          json: { schemas: { Author }, files: { add: [sha(content)] } },
+          json: { schemas: { Author }, assets: { add: [sha(content)] } },
         }),
       )
       const sid = opened.session_id as string
-      expect(opened.needed_files).toEqual([sha(content)])
+      expect(opened.needed_assets).toEqual([sha(content)])
       const commit = async () => {
         const res = await h.request(
           `${base}/push/${sid}/commit${mode === 'async' ? '?async=true' : ''}`,
@@ -618,14 +617,14 @@ describe('push sessions settle once', () => {
       const s = await status()
       expect(s).toMatchObject({
         status: 'open',
-        error: { error: 'Missing files', filesNeeded: [sha(content)], statusCode: 422 },
+        error: { error: 'Missing files', assetsNeeded: [sha(content)], statusCode: 422 },
         result: null,
         finalize_started_at: null,
       })
       expect(new Date(s.expires_at).getTime()).toBeGreaterThan(Date.now())
 
       expect(
-        (await h.request(`${base}/files/${sha(content)}`, { method: 'PUT', user, body: content }))
+        (await h.request(`${base}/assets/${sha(content)}`, { method: 'PUT', user, body: content }))
           .status,
       ).toBe(201)
       const done = await commit()
@@ -633,7 +632,7 @@ describe('push sessions settle once', () => {
       expect(await status()).toMatchObject({
         status: 'committed',
         error: null,
-        result: { semver: 'v1.0.0', fileCount: 1 },
+        result: { semver: 'v1.0.0', assetCount: 1 },
       })
       expect((await settled(h, c.id, sid)).versions).toHaveLength(1)
     })

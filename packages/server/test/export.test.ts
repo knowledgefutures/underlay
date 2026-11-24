@@ -29,7 +29,7 @@ describeNotOnV3('private records or types: a v3 collection is private or public 
       const base = '/api/collections/org/lib'
       const file = 'file bytes'
       const fileHash = createHash('sha256').update(file).digest('hex')
-      await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
+      await h.request(`${base}/assets/${fileHash}`, { method: 'PUT', user, body: file })
       const Doc = { type: 'object' }
       const sid = (
         await json(
@@ -63,7 +63,7 @@ describeNotOnV3('private records or types: a v3 collection is private or public 
       await writeFile(join(dir, 'a.tar.gz'), new Uint8Array(await res.arrayBuffer()))
       execFileSync('tar', ['-xzf', 'a.tar.gz'], { cwd: dir })
       const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))
-      expect(manifest.version).toMatchObject({ semver: 'v1.0.0', recordCount: 2, fileCount: 1 })
+      expect(manifest.version).toMatchObject({ semver: 'v1.0.0', recordCount: 2, assetCount: 1 })
       expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Lib\n')
       const docs = (await readFile(join(dir, 'records/Doc.ndjson'), 'utf8'))
         .trim()

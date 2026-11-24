@@ -109,7 +109,6 @@ export function exportRoutes() {
             hash: v.hash,
             message: v.message,
             recordCount,
-            fileCount: fileHashes.size,
             assetCount: fileHashes.size,
             totalBytes:
               [...sizes.values()].reduce((n, s) => n + s.bytes - s.count * PER_RECORD_EXTRA, 0) +
@@ -117,8 +116,6 @@ export function exportRoutes() {
             createdAt: v.createdAt,
           },
           schemas,
-          files_missing: missing,
-          files_withheld: withheldFiles,
           assets_missing: missing,
           assets_withheld: withheldFiles,
         },

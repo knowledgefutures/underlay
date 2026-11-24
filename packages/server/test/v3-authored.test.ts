@@ -38,7 +38,7 @@ async function sendFiles(h: Harness, user: string, base: string, files: Built[])
   const id = opened.upload_id as string
   for (const f of files) {
     const res = await json(
-      await h.request(`${base}/uploads/${id}/files`, {
+      await h.request(`${base}/uploads/${id}/record-files`, {
         method: 'POST',
         user,
         json: { id: f.ref.id, size: f.bytes.byteLength },
@@ -76,7 +76,7 @@ async function push(
   const res = await h.request(`${base}/uploads/${id}/commit`, {
     method: 'POST',
     user,
-    json: { files: files.map((f) => f.ref), commit: dec.decode(built.bytes) },
+    json: { record_files: files.map((f) => f.ref), commit: dec.decode(built.bytes) },
   })
   await h.drain()
   const status = await json(await h.request(`${base}/uploads/${id}`, { user }))
@@ -188,7 +188,7 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     await h.request(`${base}/uploads/${id}/commit`, {
       method: 'POST',
       user,
-      json: { files: ch.files, commit: dec.decode(commits[0]!.bytes) },
+      json: { record_files: ch.files, commit: dec.decode(commits[0]!.bytes) },
     })
     await h.drain()
     expect(await json(await h.request(`${base}/uploads/${id}`, { user }))).toMatchObject({
@@ -228,7 +228,7 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     const res = await h.request(`${base}/uploads/${id}/commit`, {
       method: 'POST',
       user,
-      json: { files: files.map((f) => f.ref), commit: dec.decode(other.bytes) },
+      json: { record_files: files.map((f) => f.ref), commit: dec.decode(other.bytes) },
     })
     expect(res.status).toBe(400)
     // A commit dated an hour ago (the library would not build one before the commit it follows).
@@ -245,7 +245,7 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     const res2 = await h.request(`${base}/uploads/${id}/commit`, {
       method: 'POST',
       user,
-      json: { files: files.map((f) => f.ref), commit: dec.decode(old) },
+      json: { record_files: files.map((f) => f.ref), commit: dec.decode(old) },
     })
     expect(res2.status).toBe(400)
     expect((await json(res2)).error).toContain('createdAt')
@@ -274,7 +274,7 @@ describe.skipIf(!onV3)('v3: commits built by their author', () => {
     await h.request(`${base}/uploads/${id}/commit`, {
       method: 'POST',
       user,
-      json: { files: files.map((f) => f.ref) },
+      json: { record_files: files.map((f) => f.ref) },
     })
     await h.drain()
     expect(await v3.readReceipt(h.ports.stores.v3, c.id, 1)).toMatchObject({ number: 1 })
@@ -465,7 +465,7 @@ describe.skipIf(!onV3)('v3: what the phase 0 review found', () => {
     await h.request(`${base}/uploads/${id}/commit`, {
       method: 'POST',
       user,
-      json: { files: files.map((f) => f.ref) },
+      json: { record_files: files.map((f) => f.ref) },
     })
     await h.drain()
     const status = await json(await h.request(`${base}/uploads/${id}`, { user }))

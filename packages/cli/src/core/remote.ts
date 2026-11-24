@@ -88,11 +88,9 @@ export interface CommitPage {
 export interface UploadStatus {
   upload_id: string
   status: 'open' | 'verifying' | 'landing' | 'committing' | 'committed' | 'failed' | 'expired'
-  /** Sorted-record-files the commit names, and those checked; `files_…` before 2026-11-22. */
+  /** Sorted-record-files the commit names, and those checked. */
   record_files_named?: number
   record_files_verified?: number
-  files_named?: number
-  files_verified?: number
   present?: string[]
   result: { semver: string; hash: string; recordCount: number } | null
   error: {
@@ -414,12 +412,10 @@ export class Remote {
     org: string,
     name: string,
     upload: string,
-    body: { files: v3.FileRef[]; commit: string },
+    body: { record_files: v3.FileRef[]; commit: string },
     progress: (s: UploadStatus) => void = () => {},
   ): Promise<UploadStatus> {
     const base = `${this.collectionPath(org, name)}/uploads/${upload}`
-    // The body names its sorted-record-files `files`, not `record_files`: a server deployed
-    // before 2026-11-22 reads only `files`, and a newer one reads either.
     const res = await this.request(`${base}/commit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

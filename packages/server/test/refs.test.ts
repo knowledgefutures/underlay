@@ -239,7 +239,7 @@ describeNotOnV3('not on v3 yet: the reference index (decision 6)')('forks and ac
     const priv = 'private pdf'
     for (const b of [pub, priv]) {
       expect(
-        (await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })).status,
+        (await h.request(`${base}/assets/${sha(b)}`, { method: 'PUT', user, body: b })).status,
       ).toBe(201)
     }
     await push(h, user, base, { schemas: { Doc } }, [
@@ -259,14 +259,16 @@ describeNotOnV3('not on v3 yet: the reference index (decision 6)')('forks and ac
     ).toBe(201)
     await h.drain()
 
-    expect((await h.request(`/api/collections/files/${sha(priv)}`, { user: 'u2' })).status).toBe(
+    expect((await h.request(`/api/collections/assets/${sha(priv)}`, { user: 'u2' })).status).toBe(
       404,
     )
     const d2 = hashRecord('d2', 'Doc', { pdf: { $file: `sha256:${sha(priv)}` } }).hash
     expect((await h.request(`/api/records/${d2}/provenance`, { user: 'u2' })).status).toBe(404)
     // What the fork did carry stays reachable, and the parent's members still see both.
-    expect((await h.request(`/api/collections/files/${sha(pub)}`, { user: 'u2' })).status).toBe(302)
-    expect((await h.request(`/api/collections/files/${sha(priv)}`, { user })).status).toBe(302)
+    expect((await h.request(`/api/collections/assets/${sha(pub)}`, { user: 'u2' })).status).toBe(
+      302,
+    )
+    expect((await h.request(`/api/collections/assets/${sha(priv)}`, { user })).status).toBe(302)
   })
 
   it('keeps what a fork inherited when it removes a record and adds it back', async () => {

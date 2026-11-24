@@ -80,7 +80,7 @@ async function sendUpload(
         bytes += body.byteLength
         for (let attempt = 0; ; attempt++) {
           try {
-            const target = await call('POST', `/uploads/${id}/files`, {
+            const target = await call('POST', `/uploads/${id}/record-files`, {
               id: f.id,
               size: body.byteLength,
             })
@@ -98,7 +98,7 @@ async function sendUpload(
                 if (!res.ok) throw new Error(`PUT part ${p.n}: ${res.status}`)
                 parts.push({ n: p.n, etag: res.headers.get('etag') ?? '' })
               }
-              await call('POST', `/uploads/${id}/files/${f.id}/complete`, {
+              await call('POST', `/uploads/${id}/record-files/${f.id}/complete`, {
                 upload_id: target.upload_id,
                 parts,
               })
@@ -115,7 +115,7 @@ async function sendUpload(
   )
   const sent = performance.now()
   // A small commit is answered with its result; a large one is polled, soon at first.
-  let s: Record<string, any> = await call('POST', `/uploads/${id}/commit`, { files })
+  let s: Record<string, any> = await call('POST', `/uploads/${id}/commit`, { record_files: files })
   let lastLog = 0
   for (let wait = 1000; ; wait = Math.min(5000, wait * 2)) {
     if (s.status === 'committed' || s.status === 'failed' || s.status === 'open') break
@@ -123,7 +123,9 @@ async function sendUpload(
     s = await call('GET', `/uploads/${id}`)
     if (performance.now() - lastLog > 60_000) {
       lastLog = performance.now()
-      log(`upload ${id}: ${s.status}, ${s.files_verified} of ${s.files_named} verified`)
+      log(
+        `upload ${id}: ${s.status}, ${s.record_files_verified} of ${s.record_files_named} verified`,
+      )
     }
   }
   const done = performance.now()
@@ -201,7 +203,9 @@ export async function apiCrossrefResume(w: World, t: ApiTarget, id: string): Pro
     s = await call('GET', `/uploads/${id}`)
     if (performance.now() - lastLog > 60_000) {
       lastLog = performance.now()
-      log(`upload ${id}: ${s.status}, ${s.files_verified} of ${s.files_named} verified`)
+      log(
+        `upload ${id}: ${s.status}, ${s.record_files_verified} of ${s.record_files_named} verified`,
+      )
     }
   }
   const local = fileStore(w.storeDir)

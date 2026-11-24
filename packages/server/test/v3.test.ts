@@ -257,7 +257,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       to: 'v1.1.0',
       added: [],
       removed: [{ id: 'b0', type: 'Book' }],
-      meta: { schemaChanged: false, metadataChanged: false, filesAdded: 0 },
+      meta: { schemaChanged: false, metadataChanged: false, assetsAdded: 0 },
     })
     expect(diff.updated).toEqual([{ id: 'a05', type: 'Author', data: { name: 'Renamed' } }])
     // The first version against nothing, a page at a time.
@@ -378,25 +378,25 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const never = 'never uploaded'
     for (const f of [cover, loose])
       expect(
-        (await h.request(`${base}/files/${sha(f)}`, { method: 'PUT', user, body: f })).status,
+        (await h.request(`${base}/assets/${sha(f)}`, { method: 'PUT', user, body: f })).status,
       ).toBe(201)
     let res = await push(
       h,
       user,
       base,
-      { schemas: { Book }, files: { add: [sha(loose), sha(never)] } },
+      { schemas: { Book }, assets: { add: [sha(loose), sha(never)] } },
       [{ id: 'x', type: 'Book', data: { title: 'X', cover: attach(sha(cover)) } }],
     )
     expect(res.status).toBe(422)
-    expect(await json(res)).toMatchObject({ error: 'Missing files', filesNeeded: [sha(never)] })
+    expect(await json(res)).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(never)] })
 
-    res = await push(h, user, base, { schemas: { Book }, files: { add: [sha(loose)] } }, [
+    res = await push(h, user, base, { schemas: { Book }, assets: { add: [sha(loose)] } }, [
       { id: 'x', type: 'Book', data: { title: 'X', cover: attach(sha(cover)) } },
     ])
     expect(res.status).toBe(201)
-    expect(await json(res)).toMatchObject({ fileCount: 2 })
+    expect(await json(res)).toMatchObject({ assetCount: 2 })
     // Both are assets, the loose one included (no record names it), with their bytes copied in.
-    const files = await json(await h.request(`${base}/versions/latest/files`))
+    const files = await json(await h.request(`${base}/versions/latest/assets`))
     expect(files.map((f: { hash: string }) => f.hash).sort()).toEqual(
       [sha(cover), sha(loose)].sort(),
     )
@@ -407,11 +407,11 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const row = (await lastRow(h.ports, c.id))!
     expect(row.assetBytes).toBe(cover.length + loose.length)
     // Removing the loose file removes its asset row.
-    res = await push(h, user, base, { base: 'v1.0.0', files: { remove: [sha(loose)] } })
+    res = await push(h, user, base, { base: 'v1.0.0', assets: { remove: [sha(loose)] } })
     expect(res.status).toBe(201)
-    expect(await json(res)).toMatchObject({ semver: 'v1.0.1', fileCount: 1 })
+    expect(await json(res)).toMatchObject({ semver: 'v1.0.1', assetCount: 1 })
     const diff = await json(await h.request(`${base}/versions/latest/diff`))
-    expect(diff.meta).toMatchObject({ filesRemoved: 1, filesAdded: 0 })
+    expect(diff.meta).toMatchObject({ assetsRemoved: 1, assetsAdded: 0 })
   })
 
   it('attaches an asset a $asset reference names, and refuses a malformed one', async () => {
@@ -419,7 +419,8 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const cover = 'a cover'
     const never = 'never uploaded'
     expect(
-      (await h.request(`${base}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })).status,
+      (await h.request(`${base}/assets/${sha(cover)}`, { method: 'PUT', user, body: cover }))
+        .status,
     ).toBe(201)
     const book = (ref: unknown) => [{ id: 'x', type: 'Book', data: { title: 'X', cover: ref } }]
     // An asset never sent is missing, as with $file.
@@ -431,7 +432,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       book({ $asset: `ul:asset:${sha(never)}` }),
     )
     expect(res.status).toBe(422)
-    expect(await json(res)).toMatchObject({ error: 'Missing files', filesNeeded: [sha(never)] })
+    expect(await json(res)).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(never)] })
     // A pasted hash is refused, not stored as data that looks like a reference.
     res = await push(h, user, base, { schemas: { Book } }, book({ $asset: `sha256:${sha(cover)}` }))
     expect(res.status).toBe(422)
@@ -444,8 +445,8 @@ describe.skipIf(!onV3)('v3 collections', () => {
       book({ $asset: `ul:asset:${sha(cover)}`, fileName: 'cover.png' }),
     )
     expect(res.status).toBe(201)
-    expect(await json(res)).toMatchObject({ fileCount: 1 })
-    const files = await json(await h.request(`${base}/versions/latest/files`))
+    expect(await json(res)).toMatchObject({ assetCount: 1 })
+    const files = await json(await h.request(`${base}/versions/latest/assets`))
     expect(files.map((f: { hash: string }) => f.hash)).toEqual([sha(cover)])
   })
 
@@ -549,7 +550,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       const id = opened.upload_id as string
       for (const f of files) {
         const res = await json(
-          await h.request(`${base}/uploads/${id}/files`, {
+          await h.request(`${base}/uploads/${id}/record-files`, {
             method: 'POST',
             user,
             json: { id: f.ref.id, size: f.bytes.byteLength },
@@ -564,7 +565,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       const res = await h.request(`${base}/uploads/${id}/commit`, {
         method: 'POST',
         user,
-        json: { files: files.map((f) => f.ref) },
+        json: { record_files: files.map((f) => f.ref) },
       })
       await h.drain()
       const after: Record<string, any> = await json(
@@ -585,7 +586,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       status: 'committed',
       result: { semver: 'v1.0.0', recordCount: 300 },
     })
-    expect(up.files_named).toBeGreaterThan(uploadLimits.inlineFiles)
+    expect(up.record_files_named).toBeGreaterThan(uploadLimits.inlineFiles)
     // More files than a request lands itself: queued, then verified a job a file.
     expect(up.commitStatus).toBe(202)
     // A second upload: an update, a removal, a new record; counted against the head.
@@ -692,7 +693,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       for (const f of built) {
         const bytes = local.objects.get(v3.uploadKey(session, f.id))!.bytes
         const t = await json(
-          await h.request(`${base}/uploads/${id}/files`, {
+          await h.request(`${base}/uploads/${id}/record-files`, {
             method: 'POST',
             user,
             json: { id: f.id, size: bytes.byteLength },
@@ -703,12 +704,17 @@ describe.skipIf(!onV3)('v3 collections', () => {
       const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
       expect(files.length).toBeGreaterThan(uploadLimits.inlineFiles)
       expect(
-        (await h.request(`${base}/uploads/${id}/commit`, { method: 'POST', user, json: { files } }))
-          .status,
+        (
+          await h.request(`${base}/uploads/${id}/commit`, {
+            method: 'POST',
+            user,
+            json: { record_files: files },
+          })
+        ).status,
       ).toBe(202)
       await h.drain()
       const up = await json(await h.request(`${base}/uploads/${id}`, { user }))
-      expect(up).toMatchObject({ status: 'committed', files_verified: files.length })
+      expect(up).toMatchObject({ status: 'committed', record_files_verified: files.length })
       expect(ran.filter((t) => t === 'v3.uploadVerify')).toHaveLength(files.length)
     } finally {
       delete h.ports.pool
@@ -730,7 +736,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       .upload_id as string
     const bytes = local.objects.get(v3.uploadKey(session, f!.id))!.bytes
     const t = await json(
-      await h.request(`${base}/uploads/${id}/files`, {
+      await h.request(`${base}/uploads/${id}/record-files`, {
         method: 'POST',
         user,
         json: { id: f!.id, size: bytes.byteLength },
@@ -741,7 +747,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const res = await h.request(`${base}/uploads/${id}/commit`, {
       method: 'POST',
       user,
-      json: { files: [ref] },
+      json: { record_files: [ref] },
     })
     expect(res.status).toBe(201)
     // As if the land job had stopped between committing and recording it on the upload.
@@ -869,7 +875,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const { h, user, base } = await setup()
     const file = 'file bytes'
     const fileHash = createHash('sha256').update(file).digest('hex')
-    await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
+    await h.request(`${base}/assets/${fileHash}`, { method: 'PUT', user, body: file })
     const LONG = 'T'.repeat(120)
     const Doc = { type: 'object' }
     const res = await push(
@@ -891,9 +897,9 @@ describe.skipIf(!onV3)('v3 collections', () => {
     await writeFile(join(dir, 'a.tar.gz'), bytes)
     execFileSync('tar', ['-xzf', 'a.tar.gz'], { cwd: dir })
     const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))
-    expect(manifest.version).toMatchObject({ semver: 'v1.0.0', recordCount: 3, fileCount: 1 })
+    expect(manifest.version).toMatchObject({ semver: 'v1.0.0', recordCount: 3, assetCount: 1 })
     expect(manifest.schemas).toEqual({ Doc, [LONG]: Doc })
-    expect(manifest).toMatchObject({ files_missing: [], files_withheld: [] })
+    expect(manifest).toMatchObject({ assets_missing: [], assets_withheld: [] })
     expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Lib\n')
     // records/<Type>.ndjson is records.ndjson's lines for the type.
     const ndjson = await (await h.request(`${base}/versions/latest/records.ndjson?type=Doc`)).text()
@@ -912,7 +918,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const { h, user, c, base } = await setup()
     const file = 'file bytes'
     const fileHash = createHash('sha256').update(file).digest('hex')
-    await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
+    await h.request(`${base}/assets/${fileHash}`, { method: 'PUT', user, body: file })
     const Doc = { type: 'object' }
     let res = await push(h, user, base, { schemas: { Doc } }, [
       { id: 'a', type: 'Doc', data: { f: attach(fileHash) } },
@@ -1018,7 +1024,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     for (const f of built) {
       const bytes = local.objects.get(v3.uploadKey(session, f.id))!.bytes
       const t = await json(
-        await h.request(`${base}/uploads/${id}/files`, {
+        await h.request(`${base}/uploads/${id}/record-files`, {
           method: 'POST',
           user,
           json: { id: f.id, size: bytes.byteLength },
@@ -1028,7 +1034,11 @@ describe.skipIf(!onV3)('v3 collections', () => {
     }
     const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
     expect(files.length).toBeGreaterThan(2)
-    await h.request(`${base}/uploads/${id}/commit`, { method: 'POST', user, json: { files } })
+    await h.request(`${base}/uploads/${id}/commit`, {
+      method: 'POST',
+      user,
+      json: { record_files: files },
+    })
     // Prepare runs and a verify or two, then every other queued job is lost.
     await h.ports.db.delete(schema.jobs)
     const stalled = async () => {
@@ -1046,7 +1056,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     const up = await json(await h.request(`${base}/uploads/${id}`, { user }))
     expect(up).toMatchObject({
       status: 'committed',
-      files_verified: files.length,
+      record_files_verified: files.length,
       result: { recordCount: 300 },
     })
   })
@@ -1063,7 +1073,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       for (const f of built) {
         const bytes = local.objects.get(v3.uploadKey(session, f.id))!.bytes
         const t = await json(
-          await h.request(`${base}/uploads/${id}/files`, {
+          await h.request(`${base}/uploads/${id}/record-files`, {
             method: 'POST',
             user,
             json: { id: f.id, size: bytes.byteLength },
@@ -1072,7 +1082,11 @@ describe.skipIf(!onV3)('v3 collections', () => {
         await h.bucket.put(String(t.url).replace('memory://put/', ''), bytes)
       }
       const files = built.map(({ size: _s, labeled: _l, commits: _c, ...ref }) => ref)
-      await h.request(`${base}/uploads/${id}/commit`, { method: 'POST', user, json: { files } })
+      await h.request(`${base}/uploads/${id}/commit`, {
+        method: 'POST',
+        user,
+        json: { record_files: files },
+      })
       await h.drain()
       return json(await h.request(`${base}/uploads/${id}`, { user }))
     }

@@ -230,16 +230,16 @@ describe('collection URLs (spec 11.3.1)', () => {
     await h.collection('files')
     const path = '/api/collections/org/files'
     const cover = 'cover bytes'
-    await h.request(`${path}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })
+    await h.request(`${path}/assets/${sha(cover)}`, { method: 'PUT', user, body: cover })
     await push(h, user, path, { schemas: { Book } }, [
       book('a', { title: 'a', cover: attach(sha(cover)) }),
     ])
     const diff = (await (await h.request(`${path}/versions/latest/diff`, { user })).json()) as {
       from: string | null
       added: unknown[]
-      meta: { filesAdded: number }
+      meta: { assetsAdded: number }
     }
-    expect(diff).toMatchObject({ from: null, meta: { filesAdded: 1 } })
+    expect(diff).toMatchObject({ from: null, meta: { assetsAdded: 1 } })
     expect(diff.added).toHaveLength(1)
   })
 })

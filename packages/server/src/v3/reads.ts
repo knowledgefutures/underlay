@@ -25,7 +25,6 @@ import { versionSummary, withPusherNames } from '../api/collections.js'
 import type { AppEnv } from '../app.js'
 import { chunks, inJson, JSON_CHUNK } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
-import { assetList } from '../lib/asset-names.js'
 import { deniedHashes } from '../lib/limits.js'
 import { previewRecord } from '../lib/preview.js'
 import { pullStream } from '../lib/streams.js'
@@ -434,8 +433,8 @@ export async function v3Diff(
   const meta = {
     schemaChanged: since === 0,
     metadataChanged: false,
-    filesAdded: 0,
-    filesRemoved: 0,
+    assetsAdded: 0,
+    assetsRemoved: 0,
   }
   for await (const ch of v3.changes(
     store,
@@ -447,8 +446,8 @@ export async function v3Diff(
     if (ch.type === v3.SCHEMA_TYPE) meta.schemaChanged = true
     else if (ch.type === v3.META_TYPE) meta.metadataChanged = true
     else if (ch.type === v3.ASSET_TYPE) {
-      if (!ch.before && ch.after) meta.filesAdded++
-      else if (ch.before && !ch.after) meta.filesRemoved++
+      if (!ch.before && ch.after) meta.assetsAdded++
+      else if (ch.before && !ch.after) meta.assetsRemoved++
     }
   }
   const after = q.cursor ? { type: q.cursor.t, id: q.cursor.k } : null
@@ -504,7 +503,7 @@ export async function v3Diff(
   const rest = JSON.stringify({
     removed,
     pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
-    meta: { ...meta, assetsAdded: meta.filesAdded, assetsRemoved: meta.filesRemoved },
+    meta,
   })
   const head = JSON.stringify({ from: fromSemver, to: v.row.semver })
   return c.body(
@@ -571,12 +570,12 @@ export async function v3Manifest(
       .sort(compareUtf8)
       .map((t) => [t, hashSchema(all[t])]),
   )
-  const fileList = async () => {
+  const assetList = async () => {
     if (q.cursor) return {}
-    return assetList(
-      [...(await assetsOf(store, v.view, cached)).keys()].sort(compareUtf8),
-      q.maxFiles,
-    )
+    const assets = [...(await assetsOf(store, v.view, cached)).keys()].sort(compareUtf8)
+    return assets.length > q.maxFiles
+      ? { assets: assets.slice(0, q.maxFiles), assetsTruncated: true }
+      : { assets }
   }
   const after = q.cursor ? { type: q.cursor.t, id: q.cursor.k } : null
   let next: string | null = null
@@ -620,9 +619,8 @@ export async function v3Manifest(
       since: from.semver,
       schemas,
       delta,
-      files: [],
       assets: [],
-      ...(await fileList()),
+      ...(await assetList()),
       pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
     })
   }
@@ -641,9 +639,8 @@ export async function v3Manifest(
     hash: v.row.hash,
     schemas,
     records,
-    files: [],
     assets: [],
-    ...(await fileList()),
+    ...(await assetList()),
     pagination: { limit: q.limit, hasMore: next !== null, nextCursor: next },
   })
 }

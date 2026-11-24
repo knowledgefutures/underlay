@@ -68,7 +68,6 @@ export async function v3Export(
           hash: v.row.hash,
           message: v.row.message,
           recordCount: [...sizes.values()].reduce((n, s) => n + s.count, 0),
-          fileCount: assets.size,
           assetCount: assets.size,
           totalBytes:
             [...sizes.values()].reduce((n, s) => n + s.bytes - s.count * PER_RECORD_EXTRA, 0) +
@@ -76,8 +75,6 @@ export async function v3Export(
           createdAt: v.row.createdAt,
         },
         schemas: await schemasOf(store, view),
-        files_missing: missing,
-        files_withheld: withheld,
         assets_missing: missing,
         assets_withheld: withheld,
       },

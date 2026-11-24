@@ -17,7 +17,7 @@ interface Collection {
   /** The head version's semver ("v1.2.0"). */
   latestVersion: string | null
   recordCount: number | null
-  fileCount: number | null
+  assetCount: number | null
   totalBytes: number | null
   lastPushAt: string | null
 }

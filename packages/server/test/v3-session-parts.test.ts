@@ -176,7 +176,8 @@ describe.skipIf(!onV3)('v3 session commits in parts', () => {
     const photo = 'a photo'
     const never = 'never uploaded'
     expect(
-      (await h.request(`${base}/files/${sha(photo)}`, { method: 'PUT', user, body: photo })).status,
+      (await h.request(`${base}/assets/${sha(photo)}`, { method: 'PUT', user, body: photo }))
+        .status,
     ).toBe(201)
     const withPhoto = (i: number, f: string) => ({
       ...author(i),
@@ -190,16 +191,17 @@ describe.skipIf(!onV3)('v3 session commits in parts', () => {
     await h.drain()
     let s = await status(h, user, base, sid)
     expect(s.status).toBe('open')
-    expect(s.error).toMatchObject({ error: 'Missing files', filesNeeded: [sha(never)] })
+    expect(s.error).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(never)] })
     // Uploaded now: the next commit is a new attempt, planned afresh.
     expect(
-      (await h.request(`${base}/files/${sha(never)}`, { method: 'PUT', user, body: never })).status,
+      (await h.request(`${base}/assets/${sha(never)}`, { method: 'PUT', user, body: never }))
+        .status,
     ).toBe(201)
     await commit(h, user, base, sid)
     await h.drain()
     s = await status(h, user, base, sid)
     expect(s.status).toBe('committed')
-    expect(s.result).toMatchObject({ recordCount: records.length, fileCount: 2 })
+    expect(s.result).toMatchObject({ recordCount: records.length, assetCount: 2 })
   })
 
   it('queues a lost part again from the sweep, and finishes', async () => {

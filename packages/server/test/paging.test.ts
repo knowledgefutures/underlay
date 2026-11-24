@@ -147,7 +147,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")(
       }
       type Manifest = {
         delta: { added: Entry[]; updated: Entry[]; removed: Entry[] }
-        files: string[]
+        assets: string[]
         pagination: { nextCursor: string | null }
       }
       const whole = (await get(`${base}/manifest?since=${v.semver}`)) as Manifest
@@ -159,7 +159,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")(
           `${base}/manifest?since=${v.semver}&limit=150${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
         )) as Manifest
         lines.push(...p.delta.added, ...p.delta.updated, ...p.delta.removed)
-        if (!first) expect(p.files).toEqual([])
+        if (!first) expect(p.assets).toEqual([])
         first = false
         cursor = p.pagination.nextCursor
       } while (cursor)

@@ -10,7 +10,7 @@ describe('read replicas', () => {
     expect(readsAnyReplica(req('/api/collections/a/b/versions', { method: 'HEAD' }))).toBe(true)
     expect(readsAnyReplica(req('/api/collections', { method: 'POST' }))).toBe(false)
     expect(readsAnyReplica(req('/x', { headers: { authorization: 'Bearer ul_x' } }))).toBe(false)
-    expect(readsAnyReplica(req('/api/collections/a/b/files/h?token=ul_x'))).toBe(false)
+    expect(readsAnyReplica(req('/api/collections/a/b/assets/h?token=ul_x'))).toBe(false)
     expect(
       readsAnyReplica(
         req('/dashboard', { headers: { cookie: '__Secure-better-auth.session_token=s' } }),

@@ -13,13 +13,16 @@ describe('commitUpload', () => {
 
   it('takes the upload’s status as the answer when a commit sent twice is refused', async () => {
     // The first send went through and its answer was lost; the second finds it committed.
-    const s = await remote('committed').commitUpload('o', 'c', 'u', { files: [], commit: '{}' })
+    const s = await remote('committed').commitUpload('o', 'c', 'u', {
+      record_files: [],
+      commit: '{}',
+    })
     expect(s).toMatchObject({ status: 'committed', result: { hash: 'ulv3:x' } })
   })
 
   it('still fails when the upload was never taken', async () => {
     await expect(
-      remote('open').commitUpload('o', 'c', 'u', { files: [], commit: '{}' }),
+      remote('open').commitUpload('o', 'c', 'u', { record_files: [], commit: '{}' }),
     ).rejects.toThrow(RemoteError)
   })
 })

@@ -42,7 +42,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('reconcile', (
     const c = await h.collection('docs')
     const base = '/api/collections/org/docs'
     const pdf = 'pdf bytes'
-    await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+    await h.request(`${base}/assets/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
     await push(h, user, base, { schemas: { Doc } }, [
       { id: 'a', type: 'Doc', data: { title: 'A', pdf: { $file: `sha256:${sha(pdf)}` } } },
       { id: 'b', type: 'Doc', data: { title: 'B' } },
@@ -156,7 +156,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('reconcile', (
     await h.ports.db.update(schema.collections).set({ public: true })
     for (let i = 0; i < 4; i++) {
       const pdf = `pdf ${i}`
-      await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+      await h.request(`${base}/assets/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
       await push(h, user, base, i === 0 ? { schemas: { Doc } } : {}, [
         // Each version replaces the last one's file: the cumulative tree keeps them all.
         { id: 'a', type: 'Doc', data: { title: `A${i}`, pdf: { $file: `sha256:${sha(pdf)}` } } },
@@ -170,7 +170,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('reconcile', (
       expect(first.reconciledFilesRoot).toBe(first.publicFilesRoot)
 
       // One more version; the next run starts its files tree from seq 4.
-      await h.request(`${base}/files/${sha('pdf 4')}`, { method: 'PUT', user, body: 'pdf 4' })
+      await h.request(`${base}/assets/${sha('pdf 4')}`, { method: 'PUT', user, body: 'pdf 4' })
       await push(h, user, base, {}, [
         { id: 'a', type: 'Doc', data: { title: 'A4', pdf: { $file: `sha256:${sha('pdf 4')}` } } },
       ])
@@ -185,7 +185,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('reconcile', (
       expect(second.reconcileReport?.map((d) => d.field)).toEqual(['publicFilesRoot'])
       expect(second).toMatchObject({ reconciledSeq: 5, publicFilesRoot: good })
       for (let i = 0; i < 5; i++) {
-        const res = await h.request(`${base}/files/${sha(`pdf ${i}`)}`)
+        const res = await h.request(`${base}/assets/${sha(`pdf ${i}`)}`)
         expect(res.status).toBe(302)
       }
     } finally {

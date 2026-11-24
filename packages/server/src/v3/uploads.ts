@@ -1235,7 +1235,6 @@ async function settleCommitted(ports: Ports, uploadId: string, versionId: string
       semver: v?.semver,
       hash: v?.hash,
       recordCount: v?.recordCount,
-      fileCount: v?.fileCount,
       assetCount: v?.fileCount,
       changes: v?.changes,
     },

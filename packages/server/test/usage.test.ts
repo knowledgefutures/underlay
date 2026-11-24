@@ -29,7 +29,7 @@ describe('usage', () => {
     await h.ports.db.update(schema.collections).set({ public: true })
     const base = '/api/collections/org/docs'
     const pdf = 'pdf bytes!'
-    await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+    await h.request(`${base}/assets/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
     const sid = (
       (await (
         await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } })
@@ -49,7 +49,7 @@ describe('usage', () => {
     const list = await h.request(`${base}/versions/latest/records`)
     expect(list.status).toBe(200)
     const listBytes = (await list.arrayBuffer()).byteLength
-    expect((await h.request(`${base}/files/${sha(pdf)}`)).status).toBe(302)
+    expect((await h.request(`${base}/assets/${sha(pdf)}`)).status).toBe(302)
     await h.request('/api/health') // not a collection: nothing billed
 
     const of = (m: string) => seen.filter((e) => e.m === m)

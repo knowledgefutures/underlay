@@ -26,7 +26,7 @@ async function setup() {
   await h.ports.db.update(schema.collections).set({ public: true })
   const base = '/api/collections/org/docs'
   const pdf = 'pdf'
-  await h.request(`${base}/files/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
+  await h.request(`${base}/assets/${sha(pdf)}`, { method: 'PUT', user, body: pdf })
   const sid = (
     (await (
       await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } })
@@ -106,7 +106,7 @@ describe('page performance', () => {
     expect(await cc(`${base}/versions/v1.0.0/records?type=Doc`, user)).toBe('private, max-age=3600')
     expect(await cc(`${base}/versions/latest/records?type=Doc`)).toBeNull()
     expect(await cc(`${base}/versions/v9.9.9`)).toBeNull()
-    expect(await cc(`${base}/files/${sha(pdf)}`)).toBe('private, max-age=240')
+    expect(await cc(`${base}/assets/${sha(pdf)}`)).toBe('private, max-age=240')
   })
 
   it('authenticates a page once for all its in-process API calls', async () => {

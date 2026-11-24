@@ -86,7 +86,7 @@ export default function CollectionOverviewBody({
               </span>
               <span className="text-ink-muted">·</span>
               <span className="text-ink-muted">
-                {version.fileCount.toLocaleString('en-US')} assets
+                {version.assetCount.toLocaleString('en-US')} assets
               </span>
               <span className="text-ink-muted">·</span>
               <span className="text-ink-muted">{formatBytes(version.totalBytes)}</span>
@@ -263,7 +263,7 @@ export default function CollectionOverviewBody({
                   />
                 </svg>
                 <span>
-                  <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong>{' '}
+                  <strong className="text-ink">{version.assetCount.toLocaleString('en-US')}</strong>{' '}
                   assets
                 </span>
               </div>

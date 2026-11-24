@@ -38,7 +38,7 @@ beforeEach(() => {
 async function push(h: Harness, user: string, slug: string, records: unknown[], file?: string) {
   const base = `/api/collections/org/${slug}`
   if (file) {
-    const put = await h.request(`${base}/files/${sha(file)}`, { method: 'PUT', user, body: file })
+    const put = await h.request(`${base}/assets/${sha(file)}`, { method: 'PUT', user, body: file })
     expect(put.status).toBeLessThan(300)
   }
   const open = await h.request(`${base}/push`, { method: 'POST', user, json: { schemas: { Doc } } })
@@ -699,7 +699,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('the write fen
     const bytes = 'reused bytes'
     // A files row whose bytes the sweep deleted (rows first, then bytes, so
     // this only happens to a writer that read the row before the window).
-    await h.request(`/api/collections/org/f/files/${sha(bytes)}`, {
+    await h.request(`/api/collections/org/f/assets/${sha(bytes)}`, {
       method: 'PUT',
       user,
       body: bytes,
@@ -708,7 +708,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('the write fen
     expect(h.bucket.objects.has(key)).toBe(true)
     await h.ports.db.delete(schema.files).where(eq(schema.files.hash, sha(bytes)))
     h.bucket.objects.delete(key)
-    await h.request(`/api/collections/org/f/files/${sha(bytes)}`, {
+    await h.request(`/api/collections/org/f/assets/${sha(bytes)}`, {
       method: 'PUT',
       user,
       body: bytes,

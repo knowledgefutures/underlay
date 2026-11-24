@@ -93,7 +93,7 @@ describe('links', () => {
     expect(checkLinks({ x: { $link: `ul:rec:${a}`, id: 7 } })).toMatch(/"id"/)
   })
 
-  it('refuses $file, reads stored ones as asset links, and does not search inside a link', () => {
+  it('refuses $file, does not read it as an asset link, and does not search inside a link', () => {
     const data = {
       pdf: { $file: `sha256:${b}`, name: 'p.pdf' },
       bad: { $file: 'sha256:short', inner: { $link: `ul:rec:${a}` } },
@@ -102,7 +102,6 @@ describe('links', () => {
     expect(checkLinks(data)).toMatch(/^\$file at \/pdf is not read/)
     expect(checkLinks({ l: { $link: `ul:rec:${a}`, x: { $file: 'y' } } })).toBeNull()
     expect(links(data).map((l) => [l.path, l.kind, l.attached ?? false])).toEqual([
-      ['/pdf', 'asset', true],
       ['/bad/inner', 'rec', false],
       ['/l', 'rec', false],
     ])
@@ -141,10 +140,8 @@ describe('asset reference members', () => {
       bad: { $asset: ulId('asset', 'c'.repeat(64)), mediaType: 'not a type' },
       linked: { $link: ulId('asset', 'd'.repeat(64)), mediaType: 'image/gif' },
     }
-    expect(assetMediaTypes(data)).toEqual({
-      [a]: 'image/png',
-      [b]: 'application/pdf; charset=binary',
-    })
+    // A `$file` is not read: its media type is not an asset's.
+    expect(assetMediaTypes(data)).toEqual({ [a]: 'image/png' })
   })
 
   it('takes a media type or a file name only when it is one', () => {

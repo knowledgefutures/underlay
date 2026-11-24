@@ -198,7 +198,7 @@ describe.runIf(process.env.UNDERLAY_TEST_LAYOUT === 'f')('uploads into layout F'
     await upload(h, user, 'files', missing, [withFile])
     expect(await commit(h, user, 'files', missing)).toBe(422)
 
-    const put = await h.request(`/api/collections/org/files/files/${sha(file)}`, {
+    const put = await h.request(`/api/collections/org/files/assets/${sha(file)}`, {
       method: 'PUT',
       user,
       body: file,

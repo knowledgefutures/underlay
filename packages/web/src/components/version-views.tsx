@@ -38,8 +38,8 @@ export function VersionInfoBar({
             {version.recordCount === 1 ? 'record' : 'records'}
           </span>
           <span>
-            <strong className="text-ink">{version.fileCount.toLocaleString('en-US')}</strong>{' '}
-            {version.fileCount === 1 ? 'asset' : 'assets'}
+            <strong className="text-ink">{version.assetCount.toLocaleString('en-US')}</strong>{' '}
+            {version.assetCount === 1 ? 'asset' : 'assets'}
           </span>
           <span>
             <strong className="text-ink">{formatBytes(version.totalBytes)}</strong> total

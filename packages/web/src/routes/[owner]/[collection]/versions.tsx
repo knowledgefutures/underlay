@@ -71,7 +71,7 @@ export default function CollectionVersionsPage() {
                 <div className="text-ink-muted flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
                   <span>{v.recordCount.toLocaleString('en-US')} records</span>
                   <span className="hidden sm:inline">
-                    {v.fileCount.toLocaleString('en-US')} assets
+                    {v.assetCount.toLocaleString('en-US')} assets
                   </span>
                   <span>{formatBytes(v.totalBytes)}</span>
                   <span className="w-20 text-right">{formatDate(v.createdAt)}</span>

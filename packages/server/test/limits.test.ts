@@ -102,7 +102,7 @@ describe('denylist and abuse reports', () => {
       const bad = 'bad bytes'
       const good = 'good bytes'
       for (const b of [bad, good]) {
-        await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user: owner, body: b })
+        await h.request(`${base}/assets/${sha(b)}`, { method: 'PUT', user: owner, body: b })
       }
       const open = await h.request(`${base}/push`, {
         method: 'POST',
@@ -149,8 +149,8 @@ describe('denylist and abuse reports', () => {
 
       // The global route finds files through the reference log.
       await h.drain()
-      expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
-      expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(302)
+      expect((await call(`${base}/assets/${sha(bad)}`)).status).toBe(302)
+      expect((await call(`/api/collections/assets/${sha(bad)}`)).status).toBe(302)
       expect((await block({ hash: sha(bad), kind: 'file', reason: 'spam' })).status).toBe(201)
       expect((await block({ hash: spam.hash, kind: 'record', reason: 'spam' })).status).toBe(201)
 
@@ -160,10 +160,10 @@ describe('denylist and abuse reports', () => {
       ).toEqual([])
 
       // Files: the redirect, the global route and presign all refuse it.
-      expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(451)
-      expect((await call(`/api/collections/files/${sha(bad)}`)).status).toBe(451)
+      expect((await call(`${base}/assets/${sha(bad)}`)).status).toBe(451)
+      expect((await call(`/api/collections/assets/${sha(bad)}`)).status).toBe(451)
       const presigned = await (
-        await call(`${base}/files/presign`, {
+        await call(`${base}/assets/presign`, {
           method: 'POST',
           json: { hashes: [sha(bad), sha(good)] },
         })
@@ -174,15 +174,15 @@ describe('denylist and abuse reports', () => {
       // gets, so a 451 never confirms a file exists or is blocked.
       await h.collection('empty')
       await h.ports.db.update(schema.collections).set({ public: true })
-      expect((await call(`/api/collections/org/empty/files/${sha(bad)}`)).status).toBe(404)
+      expect((await call(`/api/collections/org/empty/assets/${sha(bad)}`)).status).toBe(404)
       expect(
-        (await call(`/api/collections/org/empty/files/${sha(bad)}`, { method: 'HEAD' })).status,
+        (await call(`/api/collections/org/empty/assets/${sha(bad)}`, { method: 'HEAD' })).status,
       ).toBe(404)
-      expect((await call(`${base}/files/${sha(bad)}`, { method: 'HEAD' })).status).toBe(451)
+      expect((await call(`${base}/assets/${sha(bad)}`, { method: 'HEAD' })).status).toBe(451)
       expect((await block({ hash: sha('unheld'), kind: 'file', reason: 'x' })).status).toBe(201)
-      expect((await call(`${base}/files/${sha('unheld')}`)).status).toBe(404)
-      expect((await call(`/api/collections/files/${sha('unheld')}`)).status).toBe(404)
-      expect((await call('/api/collections/files/not-a-hash')).status).toBe(404)
+      expect((await call(`${base}/assets/${sha('unheld')}`)).status).toBe(404)
+      expect((await call(`/api/collections/assets/${sha('unheld')}`)).status).toBe(404)
+      expect((await call('/api/collections/assets/not-a-hash')).status).toBe(404)
       // Records: listings and NDJSON leave it out; the batch read returns nothing for it.
       expect((await listing()).map((r) => r.id)).toEqual(['b'])
       const ndjson = await (await call(`${base}/versions/latest/records.ndjson`)).text()
@@ -201,14 +201,14 @@ describe('denylist and abuse reports', () => {
       expect(tar.has(`files/${sha(bad)}`)).toBe(false)
       expect(tar.get(`files/${sha(good)}`)).toBe(good)
       const manifest = JSON.parse(tar.get('manifest.json')!)
-      expect(manifest.files_withheld).toEqual([sha(bad)])
+      expect(manifest.assets_withheld).toEqual([sha(bad)])
       expect(manifest.version.recordCount).toBe(1)
 
       // Unblocking serves it again.
       expect(
         (await call(`/api/admin/denylist/${sha(bad)}`, { method: 'DELETE', user: 'u1' })).status,
       ).toBe(200)
-      expect((await call(`${base}/files/${sha(bad)}`)).status).toBe(302)
+      expect((await call(`${base}/assets/${sha(bad)}`)).status).toBe(302)
       const entries = (await (await call('/api/admin/denylist', { user: 'u1' })).json()).entries
       expect(entries.map((e: { kind: string }) => e.kind).sort()).toEqual(['file', 'record'])
     },

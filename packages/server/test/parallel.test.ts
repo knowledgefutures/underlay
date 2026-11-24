@@ -229,7 +229,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel comm
     const files = ['f1', 'f2', 'f3']
     for (const path of [pathA, pathB]) {
       for (const f of files) {
-        const r = await h.request(`${path}/files/${sha(f)}`, { method: 'PUT', user, body: f })
+        const r = await h.request(`${path}/assets/${sha(f)}`, { method: 'PUT', user, body: f })
         expect(r.status).toBe(201)
       }
     }
@@ -363,7 +363,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel comm
     const pathA = '/api/collections/org/ka'
     const pathB = '/api/collections/org/kb'
     for (const path of [pathA, pathB]) {
-      const r = await h.request(`${path}/files/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
+      const r = await h.request(`${path}/assets/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
       expect(r.status).toBe(201)
     }
     const id = (i: number) => `r${String(i).padStart(5, '0')}`
@@ -425,7 +425,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel comm
     const pathA = '/api/collections/org/ra'
     const pathB = '/api/collections/org/rb'
     for (const path of [pathA, pathB]) {
-      const r = await h.request(`${path}/files/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
+      const r = await h.request(`${path}/assets/${sha('f1')}`, { method: 'PUT', user, body: 'f1' })
       expect(r.status).toBe(201)
     }
     const Paper = { type: 'object', properties: { title: { type: 'string' } } }
@@ -557,7 +557,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel comm
     let status = await commit()
     expect(status).toMatchObject({
       status: 'open',
-      error: { error: 'Missing files', filesNeeded: [sha('portrait')] },
+      error: { error: 'Missing files', assetsNeeded: [sha('portrait')] },
     })
     const [s] = await h.ports.db
       .select()
@@ -566,7 +566,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel comm
     expect(s!.commitPlan).toBeNull()
 
     // Upload the file, and one more record: the new plan covers it.
-    await h.request(`${path}/files/${sha('portrait')}`, { method: 'PUT', user, body: 'portrait' })
+    await h.request(`${path}/assets/${sha('portrait')}`, { method: 'PUT', user, body: 'portrait' })
     await h.request(`${path}/push/${sid}/records`, {
       method: 'POST',
       user,

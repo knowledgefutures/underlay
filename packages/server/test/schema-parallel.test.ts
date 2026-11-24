@@ -153,7 +153,7 @@ async function pair(name: string, base: { schemas: object; records: object[] }) 
   const paths = { a: `/api/collections/org/${name}-a`, b: `/api/collections/org/${name}-b` }
   for (const path of [paths.a, paths.b]) {
     for (const f of ['f1', 'f2'])
-      await h.request(`${path}/files/${sha(f)}`, { method: 'PUT', user, body: f })
+      await h.request(`${path}/assets/${sha(f)}`, { method: 'PUT', user, body: f })
     const r = await push(h, user, path, { schemas: base.schemas }, base.records, 'serial')
     expect(r.status.status).toBe('committed')
   }

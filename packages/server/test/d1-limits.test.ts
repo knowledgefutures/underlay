@@ -51,7 +51,7 @@ describe('D1 limits', () => {
     const bodies = Array.from({ length: 120 }, (_, i) => `file ${i}`)
     for (const b of bodies) {
       expect(
-        (await h.request(`${base}/files/${sha(b)}`, { method: 'PUT', user, body: b })).status,
+        (await h.request(`${base}/assets/${sha(b)}`, { method: 'PUT', user, body: b })).status,
       ).toBe(201)
     }
     await push(
@@ -65,7 +65,7 @@ describe('D1 limits', () => {
         data: { pdf: attach(sha(b)) },
       })),
     )
-    const res = await h.request(`${base}/versions/latest/files`, { user })
+    const res = await h.request(`${base}/versions/latest/assets`, { user })
     expect(res.status).toBe(200)
     const files = await json(res)
     expect(files.length).toBe(120)
@@ -73,7 +73,7 @@ describe('D1 limits', () => {
 
     // Presigning many files reads the head and the file rows once, not per hash.
     const before = h.statements()
-    const presign = await h.request(`${base}/files/presign`, {
+    const presign = await h.request(`${base}/assets/presign`, {
       method: 'POST',
       user,
       json: { hashes: [...bodies.map((b) => `sha256:${sha(b)}`), sha('not uploaded')] },
