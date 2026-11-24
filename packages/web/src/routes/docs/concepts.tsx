@@ -97,7 +97,7 @@ export default function DocsConcepts() {
         </li>
         <li>
           Pushing a new version only transfers what changed (see{' '}
-          <Link to="/docs/protocol/push-and-pull" className="text-link underline">
+          <Link to="/docs/protocol/v3/push-and-pull" className="text-link underline">
             push and pull
           </Link>
           ).
@@ -157,7 +157,7 @@ export default function DocsConcepts() {
         that isn&rsquo;t a <code>ul:</code> id is refused when you push, but its target is never
         checked: it may be private or on another server. A link to an asset only points at it; to
         attach an asset to your collection, use <code>$asset</code>. See{' '}
-        <Link to="/docs/protocol/records#links" className="text-link underline">
+        <Link to="/docs/protocol/v3/records#links" className="text-link underline">
           Links
         </Link>
         .

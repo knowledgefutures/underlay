@@ -1,6 +1,6 @@
 {
   "underlay": 3,
-  "note": "docs/protocol.md, Sections 5.1 to 5.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`; a `$file` is refused and not read).",
+  "note": "docs/protocol/v3.md, Sections 5.1 to 5.3. `id` is parseUlId (exact), `typed` is parseHashInput (what a person may type). For links, `problem` is null when a server takes the record; `links` is what an index reads, asset references included; `assets` is what the record attaches (`$asset`; a `$file` is refused and not read).",
   "ids": [
     {
       "input": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

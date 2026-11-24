@@ -1,5 +1,5 @@
 /**
- * Input rules (docs/protocol.md, Section 3.1; the same in protocol v2).
+ * Input rules (docs/protocol/v3.md, Section 3.1; the same in protocol v2).
  *
  * `JSON.parse` silently changes some inputs: it rounds large integers, keeps only
  * the last of duplicate keys, and accepts lone UTF-16 surrogates. A record changed

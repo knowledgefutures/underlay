@@ -1,5 +1,5 @@
 /**
- * Reading a version (docs/protocol.md, Section 10).
+ * Reading a version (docs/protocol/v3.md, Section 10).
  *
  * A version's files are the newest layout's files plus the files of the commits
  * after it. For each key, the entry with the highest commit at or below the

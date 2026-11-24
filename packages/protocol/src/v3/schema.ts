@@ -1,5 +1,5 @@
 /**
- * Checking an upload before it is committed (docs/protocol.md, Sections 4,
+ * Checking an upload before it is committed (docs/protocol/v3.md, Sections 4,
  * 7.3, and 7.4): its files came with it, are well formed, every record is canonical and satisfies
  * its type's schema, and the semver follows from the kinds of rows.
  *

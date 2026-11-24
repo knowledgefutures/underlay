@@ -1,5 +1,5 @@
 /**
- * Rewriting a collection's history into the protocol's one spelling (docs/protocol.md,
+ * Rewriting a collection's history into the protocol's one spelling (docs/protocol/v3.md,
  * Appendix D). Two forms written by v3 drafts are not part of the protocol, and both sit in
  * hashed bytes:
  *

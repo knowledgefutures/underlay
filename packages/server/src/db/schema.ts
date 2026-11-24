@@ -330,7 +330,7 @@ export const collections = sqliteTable(
      * Where its record bytes live (record-storage-layout.md): `today`, inside leaf
      * bodies, or `f`, in packs found through the collection's own index under
      * `runs/<collection>/`, or `v3`, a log of commits naming sorted-record-files in
-     * the bucket's v3 area (docs/protocol.md, Appendix C; v3/ here). Set at creation (forks
+     * the bucket's v3 area (docs/protocol/v3.md, Appendix C; v3/ here). Set at creation (forks
      * take their parent's); existing collections are `today` until converted.
      */
     recordLayout: text('record_layout', { enum: ['today', 'f', 'v3'] })
@@ -742,7 +742,7 @@ export const v3Uploads = sqliteTable(
     files: json<v3.FileRef[]>('files'),
     change: json<v3.Change>('change'),
     /**
-     * The commit was built by its author (docs/protocol.md 8.1): its text is kept in the internal
+     * The commit was built by its author (docs/protocol/v3.md 8.1): its text is kept in the internal
      * store until it lands. Set with the status that starts the commit, so a land never has
      * to infer it from whether that object is there.
      */

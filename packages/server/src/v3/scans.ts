@@ -1,6 +1,6 @@
 /**
  * Schema scans (v3-deploy-plan.md, Phase 2): when a change tightens a type's schema, every
- * record the head carries over into the change must satisfy the new one (docs/protocol.md 4.3).
+ * record the head carries over into the change must satisfy the new one (docs/protocol/v3.md 4.3).
  * The scan runs before landing, so landing stays short (it no longer scans: the head it
  * lands on is the one scanned). A scan of up to `inlineRecords` runs in the job preparing
  * the change; a larger one is cut into key ranges of the type, a `v3.scanUnit` job each,

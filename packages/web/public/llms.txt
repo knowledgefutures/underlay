@@ -717,7 +717,7 @@ Every record line is checked on its source text. Refused (422, with a code):
 - bad_type: type missing, empty, over 128 UTF-8 bytes, starting with ".", or containing /, \, or
   control characters
 - record_too_large: canonical form over 8 MiB
-Strings are not Unicode-normalized. Full rules: https://www.underlay.org/docs/protocol/records
+Strings are not Unicode-normalized. Full rules: https://www.underlay.org/docs/protocol/v3/records
 
 ### Schemas
 A schema is JSON Schema draft-07 ($schema, if given, must name draft-07), at most 256 KiB

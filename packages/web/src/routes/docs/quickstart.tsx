@@ -201,7 +201,7 @@ export default function DocsQuickstart() {
       <h2>3. Push a version</h2>
       <p>
         A push is a{' '}
-        <Link to="/docs/protocol/push-and-pull#delta-push" className="text-link hover:underline">
+        <Link to="/docs/protocol/v3/push-and-pull#delta-push" className="text-link hover:underline">
           delta push
         </Link>
         : open a session against a base version, upload the records that are new or changed and the
@@ -260,7 +260,7 @@ export default function DocsQuickstart() {
         If your app exports its whole dataset each time rather than tracking changes, read the
         current version&rsquo;s manifest and diff against it first. See{' '}
         <Link
-          to="/docs/protocol/push-and-pull#clients-without-a-copy"
+          to="/docs/protocol/v3/push-and-pull#clients-without-a-copy"
           className="text-link hover:underline"
         >
           clients without a copy

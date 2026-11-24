@@ -1,5 +1,5 @@
 /**
- * Underlay ids (docs/protocol.md, Section 5.1): how a record, an asset, or a version is
+ * Underlay ids (docs/protocol/v3.md, Section 5.1): how a record, an asset, or a version is
  * named by its hash outside the protocol's own objects, in record data, URLs, API
  * responses and citations.
  *

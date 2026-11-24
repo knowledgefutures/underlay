@@ -1,5 +1,5 @@
 /**
- * Version ids in D1: `versions.hash` holds `ul:ver:<hex>` (docs/protocol.md, Section 5.1).
+ * Version ids in D1: `versions.hash` holds `ul:ver:<hex>` (docs/protocol/v3.md, Section 5.1).
  */
 import { v3 } from '@underlay/protocol'
 import { type Column, eq } from 'drizzle-orm'

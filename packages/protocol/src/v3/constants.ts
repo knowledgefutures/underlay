@@ -1,5 +1,5 @@
 /**
- * Protocol v3 constants (docs/protocol.md, Section 13). Draft: they may still
+ * Protocol v3 constants (docs/protocol/v3.md, Section 13). Draft: they may still
  * change, and a change to any of them changes file ids.
  */
 

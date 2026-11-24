@@ -1,5 +1,5 @@
 /**
- * Links in record data (docs/protocol.md, Section 5.2).
+ * Links in record data (docs/protocol/v3.md, Section 5.2).
  *
  * A link is an object, at any depth of a record's `data`, with a `$link` member whose
  * value is a `ul:` id. It may say where its target was found, with `collection` (a

@@ -204,7 +204,7 @@ export const recordTree: TreeSpec<RecordEntry> = {
     ) {
       throw new NodeFormatError('Bad record entry')
     }
-    // A received node's ids follow the input rules too (docs/protocol-v2.md §3, §8.3).
+    // A received node's ids follow the input rules too (docs/protocol/v2.md §3, §8.3).
     if (key === '' || utf8ByteLength(key) > MAX_ID_BYTES)
       throw new NodeFormatError('Bad record entry: the id is empty or over the id length limit')
     if (!isWellFormed(key)) throw new NodeFormatError('Bad record entry: lone surrogate in an id')

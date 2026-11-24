@@ -1,5 +1,5 @@
 /**
- * Rewriting v3 collections into the protocol's one spelling (docs/protocol.md, Appendix D;
+ * Rewriting v3 collections into the protocol's one spelling (docs/protocol/v3.md, Appendix D;
  * the library's half is `v3.rewriteCollection`). It runs where the collection's commits
  * land (`CommitQueue.rewrite`), so no commit lands meanwhile. Then D1 follows the log: each
  * rewritten version's row takes its new id, and keeps the old one in `former_hash`, which

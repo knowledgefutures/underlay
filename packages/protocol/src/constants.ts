@@ -3,7 +3,7 @@
  *
  * Everything here is protocol: a second implementation must use the same values
  * or it will build different trees, accept different records, and compute
- * different version hashes. See docs/protocol-v2.md.
+ * different version hashes. See docs/protocol/v2.md.
  *
  * Status: stable. Frozen 2026-10-03 with the values the tree-parameter
  * experiments chose (edge-redesign-build.md, "Tree parameter experiments").

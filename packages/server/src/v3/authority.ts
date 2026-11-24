@@ -1,5 +1,5 @@
 /**
- * A collection's authority, and the receipts it writes (docs/protocol.md 8.1 and 8.2).
+ * A collection's authority, and the receipts it writes (docs/protocol/v3.md 8.1 and 8.2).
  *
  * The authority is the one server that accepts a collection's versions: `authority` in its
  * description, or, without it, the server that holds it. This server accepts a version only
@@ -37,7 +37,7 @@ export async function ensureCollection(store: Ports['stores']['v3'], id: string)
 }
 
 /**
- * Bring a collection's description up to what the protocol asks of it (docs/protocol.md,
+ * Bring a collection's description up to what the protocol asks of it (docs/protocol/v3.md,
  * Section 12): whether it is `public`, and the `keys` that sign its commits and receipts, so
  * a copy of the bucket can be checked without this server. Written only when it changes.
  */

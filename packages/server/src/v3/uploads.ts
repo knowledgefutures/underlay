@@ -16,7 +16,7 @@
  *                      collection's commit queue. If another commit landed first, the
  *                      counts are made again against the new head, a few times at most.
  *
- * docs/protocol.md 7.4: a file is named only if its bytes came with this upload (they are
+ * docs/protocol/v3.md 7.4: a file is named only if its bytes came with this upload (they are
  * under its prefix), and they are checked against its id here. A file already stored is not enough.
  *
  * The client can write `uploads/<upload>/<file id>` for as long as its presigned URLs last,
@@ -833,7 +833,7 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   const prepared: Prepared = {
     schemaChanges,
     metadata,
-    // The rule an author applies to a commit it builds (docs/protocol.md 7.3), from one place.
+    // The rule an author applies to a commit it builds (docs/protocol/v3.md 7.3), from one place.
     bump: v3.commitBump(files, schemaChanges.length > 0),
   }
   await ports.stores.internal.put(
@@ -915,7 +915,7 @@ registerJob('v3.uploadVerify', async (job, ports) => {
     if (!v) validators.set(type, (v = compileSchema(s)))
     const errs = v(data)
     if (errs.length > 0) problems.push(`${type} ${JSON.stringify(id)}: ${errs[0]}`)
-    // A malformed link is refused, not stored as data that looks like one (docs/protocol.md 5.2).
+    // A malformed link is refused, not stored as data that looks like one (docs/protocol/v3.md 5.2).
     const linkProblem = checkLinks(data)
     if (linkProblem) problems.push(`${type} ${JSON.stringify(id)}: ${linkProblem}`)
   }

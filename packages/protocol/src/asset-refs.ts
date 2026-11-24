@@ -1,5 +1,5 @@
 /**
- * Asset references in record data (docs/protocol.md, Section 5.3).
+ * Asset references in record data (docs/protocol/v3.md, Section 5.3).
  *
  * A record attaches an asset with an object, at any depth of its `data`, whose `$asset`
  * member is the asset's Underlay id. Two other members have a meaning: `mediaType`, what the

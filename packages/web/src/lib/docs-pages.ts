@@ -258,7 +258,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       {
         title: 'Protocol',
         label: 'Overview',
-        href: '/docs/protocol',
+        href: '/docs/protocol/v3',
         blurb: 'The protocol: scope, conformance, terminology, what is not available yet',
         headings: [
           'Conformance',
@@ -271,7 +271,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       },
       {
         title: 'Records and schemas',
-        href: '/docs/protocol/records',
+        href: '/docs/protocol/v3/records',
         blurb:
           'Canonical JSON, record and removal lines, reserved types, input rules, schemas, assets, ids, links, and asset references',
         headings: [
@@ -290,7 +290,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       },
       {
         title: 'Files and versions',
-        href: '/docs/protocol/versions',
+        href: '/docs/protocol/v3/versions',
         blurb: 'Sorted-record-files, commits, version ids, signatures, semver, reading a version',
         headings: [
           'Sorted-record-files',
@@ -308,13 +308,13 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
       },
       {
         title: 'Layouts and collections',
-        href: '/docs/protocol/repositories',
+        href: '/docs/protocol/v3/repositories',
         blurb: 'Layout files, rebuilds, collections and forks, the reference server’s storage',
         headings: ['Layout files', 'Rebuilds', 'Collections', 'Reference server storage'],
       },
       {
         title: 'Push and pull',
-        href: '/docs/protocol/push-and-pull',
+        href: '/docs/protocol/v3/push-and-pull',
         blurb: 'Making a commit on underlay.org, reading versions back, errors, security',
         headings: [
           'Delta push',

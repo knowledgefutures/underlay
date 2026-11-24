@@ -3,7 +3,7 @@
  * logs, outside home. Default `~/.local/share/underlay`; a rule may send a
  * collection's records elsewhere, which is then a store of its own.
  *
- * A store is laid out as a v3 server lays out its bucket (docs/protocol.md, Appendix C), so the
+ * A store is laid out as a v3 server lays out its bucket (docs/protocol/v3.md, Appendix C), so the
  * library reads it as it reads one:
  *
  *   records/<file id>                          sorted-record-files, once per store

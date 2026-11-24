@@ -1,5 +1,5 @@
 /**
- * Checking a sorted-record-file against docs/protocol.md Section 6.7.
+ * Checking a sorted-record-file against docs/protocol/v3.md Section 6.7.
  *
  * The footer checks the key blocks, and each entry checks its line, so any range
  * of key blocks can be verified alone: `verifyRange` reads those key blocks and

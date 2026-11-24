@@ -299,7 +299,7 @@ export default function DocsApiVersions() {
                 base&rsquo;s types. Every schema of the resulting type set, kept ones included, is
                 checked in full when the session opens (the draft-07 meta-schema, patterns,{' '}
                 <code>$ref</code>s that resolve, and the{' '}
-                <a href="/docs/protocol/records#schemas">schema rules</a>); one that fails is{' '}
+                <a href="/docs/protocol/v3/records#schemas">schema rules</a>); one that fails is{' '}
                 <code>422</code>. So is a type name that begins with <code>$</code>, a space,{' '}
                 <code>!</code>, <code>"</code>, or <code>#</code>, or is <code>__proto__</code>,
                 and, in a public collection, a schema marked <code>"private": true</code> (see{' '}

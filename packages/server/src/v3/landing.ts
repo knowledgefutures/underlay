@@ -44,7 +44,7 @@ export interface Landing {
   session: string
   /** Each file's session, when they came in several (a large client-built upload's copies). */
   sessions?: Record<string, string>
-  /** The kind of change, for the semver (docs/protocol.md 7.3), as its preparer found it. */
+  /** The kind of change, for the semver (docs/protocol/v3.md 7.3), as its preparer found it. */
   bump: 'major' | 'minor' | 'patch'
   change: v3.Change
   /** The version id of the head the change was prepared against (null: no commits yet). */
@@ -60,7 +60,7 @@ export interface Landing {
   actorId: string | null
   pushSessionId: string | null
   /**
-   * A commit its author built (docs/protocol.md 8.1): stored unchanged if it follows the head,
+   * A commit its author built (docs/protocol/v3.md 8.1): stored unchanged if it follows the head,
    * never renumbered. Its text, and when it was asked for (its `createdAt` is checked
    * against that).
    */
@@ -190,7 +190,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
     v3.readDescription(store, l.collectionId),
   ])
   mark()
-  // Only a collection's authority accepts a version (docs/protocol.md 8.1), however it is sent.
+  // Only a collection's authority accepts a version (docs/protocol/v3.md 8.1), however it is sent.
   const authority = authorityIn(ports, description)
   if (authority !== ports.serverName)
     return { status: 'invalid', problems: [notAuthority(authority)] }

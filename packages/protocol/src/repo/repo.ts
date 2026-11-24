@@ -1,6 +1,6 @@
 /**
  * A repository: one storage location's objects, in the documented layout
- * (docs/protocol-v2.md, "Repository layout"), read and written through a
+ * (docs/protocol/v2.md, "Repository layout"), read and written through a
  * Store. The platform primary, customer mirrors and clones all use this.
  *
  *   nodes/<hash>                          tree node JSON, gzip (hash of the uncompressed bytes)

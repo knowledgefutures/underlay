@@ -1,1 +1,7 @@
-export const handle = { title: 'Records and schemas · Protocol · Underlay' }
+import { redirect } from 'react-router'
+
+// This page was at /docs/protocol/records before the pages were kept one folder a version; it
+// described version 3.
+export function loader() {
+  return redirect('/docs/protocol/v3/records', 301)
+}

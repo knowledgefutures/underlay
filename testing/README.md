@@ -1,6 +1,6 @@
 # Scale bench (protocol v3)
 
-Runs the v3 library (`packages/protocol/src/v3`, spec in `docs/protocol.md`) on one machine
+Runs the v3 library (`packages/protocol/src/v3`, spec in `docs/protocol/v3.md`) on one machine
 against generated Crossref-shaped records and the real Crossref dump, to check the design at
 Crossref's size (about 180M records) and at 20,000 collections. The plan, the rules for running
 it, and the log are in the meta repo: `planning/kf/underlay/v3-build-plan.md`. Start there.

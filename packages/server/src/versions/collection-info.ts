@@ -98,7 +98,7 @@ registerJob('collection.info.org', async (job, ports) => {
 registerJob('collection.info', async (job, ports) => {
   const collectionId = String(job.collectionId)
   // A v3 collection's description says whether it is public and which keys sign it
-  // (docs/protocol.md, Section 12); v2's collection.json says more.
+  // (docs/protocol/v3.md, Section 12); v2's collection.json says more.
   if ((await ports.stores.layoutOf(collectionId)) === 'v3') {
     await syncDescription(ports, collectionId)
     return

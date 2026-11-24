@@ -1,5 +1,5 @@
 /**
- * Following a v3 collection's log, and fetching the files its versions name (docs/protocol.md,
+ * Following a v3 collection's log, and fetching the files its versions name (docs/protocol/v3.md,
  * Section 8.3; local-tool-build.md, phase 0). Mounted at /api/collections:
  *
  *   GET /:owner/:slug/commits?after=<n>&limit=<k>   commits after n, each with its receipt

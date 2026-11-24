@@ -23,8 +23,8 @@ Node (SQLite, S3, or the filesystem). It is a pnpm workspace:
 | `packages/cli` (`@underlay/cli`)           | The command line: a local repository, pull by tree sync, push by delta push. Unpublished, and its `clone`, `pull`, and `push` don't work against production (see its README).                                                    |
 | `packages/migrate` (`@underlay/migrate`)   | Converts a v1 (Postgres) instance into v2.                                                                                                                                                                                       |
 
-`docs/protocol-v2.md` is the specification of Underlay protocol v2, with test vectors in
-`packages/protocol/test/vectors/`. `docs/protocol.md` is the specification of protocol v3 (a log of
+`docs/protocol/v2.md` is the specification of Underlay protocol v2, with test vectors in
+`packages/protocol/test/vectors/`. `docs/protocol/v3.md` is the specification of protocol v3 (a log of
 commits naming sorted-record-files), implemented in `packages/protocol/src/v3/`; the server
 keeps each collection on v2 or v3 (`collections.record_layout`). Every collection on
 www.underlay.org is on v3, so protocol v2 no longer describes production. `docs/v1-read-api.md` is the inventory of v1's read API that

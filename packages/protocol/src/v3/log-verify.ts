@@ -1,5 +1,5 @@
 /**
- * Checking a collection's log (docs/protocol.md, Section 7 and Appendix C): the chain of
+ * Checking a collection's log (docs/protocol/v3.md, Section 7 and Appendix C): the chain of
  * commits, and, given keys, who signed each, by its own signature or by its receipt.
  */
 import { jcs } from '../jcs.js'

@@ -190,7 +190,7 @@ export async function prepareRecords(
       continue
     }
     // A malformed link or asset reference is refused, not stored as data that looks like one,
-    // and so is a `$file` (docs/protocol.md, Sections 5.2 and 5.3).
+    // and so is a `$file` (docs/protocol/v3.md, Sections 5.2 and 5.3).
     const linkProblem =
       canonical.includes('"$link"') ||
       canonical.includes('"$asset"') ||
@@ -257,7 +257,7 @@ export async function ingestRecords(
     prepared = await prepareRecords(ports, session.id, inputs, input, {
       stripUnknownFields: session.stripUnknownFields,
       packed: onV3 || records !== null,
-      // v2 attaches files with `$file`; a v3 collection refuses it (docs/protocol.md 5.3).
+      // v2 attaches files with `$file`; a v3 collection refuses it (docs/protocol/v3.md 5.3).
       legacyFiles: !onV3,
       maxLines: limits.lines,
       ...(placer ? { place: placer.place } : {}),

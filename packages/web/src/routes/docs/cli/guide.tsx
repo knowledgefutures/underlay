@@ -240,7 +240,7 @@ record.data.pdf = { $asset: \`ul:asset:\${sha}\`, mediaType: 'application/pdf', 
         , with the record&apos;s <code>hash</code> and its collection&apos;s id. A{' '}
         <code>$link</code> that isn&apos;t a <code>ul:</code> id (a bare hash, say), or a{' '}
         <code>$asset</code> that isn&apos;t a <code>ul:asset:</code> id, stops the save and names
-        the record. See <Link to="/docs/protocol/records#links">Links</Link>.
+        the record. See <Link to="/docs/protocol/v3/records#links">Links</Link>.
       </p>
 
       <h2>What a script declares</h2>
@@ -432,7 +432,7 @@ underlay reword scratch "A better message"`}</CodeBlock>
         <li>
           Versions arrive as you saved them: the same numbers, contents, and ids, so a version you
           cite from your machine is the version on the server. The server signs a receipt for each
-          one (<Link to="/docs/protocol/push-and-pull">Push and pull</Link>).
+          one (<Link to="/docs/protocol/v3/push-and-pull">Push and pull</Link>).
         </li>
         <li>
           If someone pushed first, the server refuses and your versions are rebuilt on top of

@@ -1,5 +1,5 @@
 /**
- * The two signatures of a commit (docs/protocol.md, Section 7.2).
+ * The two signatures of a commit (docs/protocol/v3.md, Section 7.2).
  *
  * The author signs what they sent: the collection, the files, the base, and the
  * message. The server signs where it landed: the whole commit, with its number

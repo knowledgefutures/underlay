@@ -1,5 +1,5 @@
 /**
- * Links in record data, for the pages (docs/protocol.md, Section 5.2). The rule is
+ * Links in record data, for the pages (docs/protocol/v3.md, Section 5.2). The rule is
  * `@underlay/protocol`'s `links`; it is repeated here so the page bundle doesn't carry the
  * protocol package. An object with `$link: "ul:<kind>:<hex>"` is a link, with where it was
  * found in `collection`, `type`, and `id`. An asset reference, `{"$asset": "ul:asset:<hex>"}`,

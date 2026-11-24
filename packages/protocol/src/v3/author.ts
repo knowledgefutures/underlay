@@ -1,6 +1,6 @@
 /**
  * Commits built by their author, and the receipts an authority signs beside them
- * (docs/protocol.md, Sections 8.1 and 8.2; federation.md F13).
+ * (docs/protocol/v3.md, Sections 8.1 and 8.2; federation.md F13).
  *
  * Each collection names one authority, the only server that accepts its versions. The
  * author builds the whole commit: it names the version it follows (`previous`), so its

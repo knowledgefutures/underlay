@@ -2,7 +2,7 @@
  * Keeping each set's file tree right in O(changes) (edge-redesign-build.md,
  * finding 5).
  *
- * Protocol (docs/protocol-v2.md §9): a file belongs to every set that has a
+ * Protocol (docs/protocol/v2.md §9): a file belongs to every set that has a
  * record referencing it; a file declared in a push but referenced by no record
  * belongs to the private set. To know when a file leaves a set, each set keeps a
  * sidecar count tree (not protocol, a writer's bookkeeping) next to the version:

@@ -51,7 +51,7 @@ export interface Stores {
   /** A collection's record layout (cached briefly per isolate, as the primary is). */
   layoutOf(collectionId: string): Promise<CollectionLayout>
   /**
-   * The v3 area of the platform bucket (docs/protocol.md, Appendix C): sorted-record-files,
+   * The v3 area of the platform bucket (docs/protocol/v3.md, Appendix C): sorted-record-files,
    * assets, and each v3 collection's commits and layouts. Shared by every v3 collection.
    */
   v3: Store

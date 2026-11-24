@@ -1,5 +1,5 @@
 /**
- * Commits, layout files, and the log (docs/protocol.md, Sections 7 and 9, and Appendix C).
+ * Commits, layout files, and the log (docs/protocol/v3.md, Sections 7 and 9, and Appendix C).
  *
  * A commit is a small numbered object, created only if its number is free, that
  * names the sorted-record-files one upload added and the commit before it. A

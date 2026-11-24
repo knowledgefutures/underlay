@@ -196,7 +196,7 @@ export default function DocsIntegration() {
       <h2>The Push Flow</h2>
       <p>
         Every push is a{' '}
-        <Link to="/docs/protocol/push-and-pull#delta-push" className="text-link underline">
+        <Link to="/docs/protocol/v3/push-and-pull#delta-push" className="text-link underline">
           delta push
         </Link>
         : you send what changed since a base version, and the server builds the new version.
@@ -253,7 +253,7 @@ export default function DocsIntegration() {
         export against the current version&rsquo;s manifest, then push the differences. The upload
         is the size of the changes, whatever the size of the collection. See{' '}
         <Link
-          to="/docs/protocol/push-and-pull#clients-without-a-copy"
+          to="/docs/protocol/v3/push-and-pull#clients-without-a-copy"
           className="text-link underline"
         >
           clients without a copy
@@ -280,7 +280,7 @@ export default function DocsIntegration() {
       </pre>
       <p>
         See{' '}
-        <Link to="/docs/protocol/records" className="text-link underline">
+        <Link to="/docs/protocol/v3/records" className="text-link underline">
           Records and schemas
         </Link>{' '}
         for the full rules, including the input rules every record line must pass.

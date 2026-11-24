@@ -597,7 +597,7 @@ if (process.argv.includes('--check')) {
   const same = JSON.stringify(JSON.parse(existing)) === JSON.stringify(JSON.parse(text))
   if (!same) {
     console.error(
-      'test/vectors/v2.json is out of date with the implementation. If the change is intended, it is a protocol change: regenerate with `pnpm vectors` and say so in docs/protocol-v2.md.',
+      'test/vectors/v2.json is out of date with the implementation. If the change is intended, it is a protocol change: regenerate with `pnpm vectors` and say so in docs/protocol/v2.md.',
     )
     process.exit(1)
   }

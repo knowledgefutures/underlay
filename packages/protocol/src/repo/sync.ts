@@ -436,7 +436,7 @@ async function receiveObject(
 
 /**
  * A body's lines, out-of-line records resolved, must be the records the leaf's
- * entries name (docs/protocol-v2.md §8.3). Returns the records' type.
+ * entries name (docs/protocol/v2.md §8.3). Returns the records' type.
  */
 async function checkBody(
   repo: Repo,

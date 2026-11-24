@@ -32,7 +32,7 @@ export default function CliOverview() {
       </p>
       <p>
         Pushing and pulling use the protocol&apos;s routes for commits built by their author and for
-        following a collection (<Link to="/docs/protocol/push-and-pull">Push and pull</Link>).
+        following a collection (<Link to="/docs/protocol/v3/push-and-pull">Push and pull</Link>).
         Listing your organizations&apos; collections (<code>underlay ls</code>) uses
         underlay.org&apos;s account routes, which are not part of the protocol.
       </p>

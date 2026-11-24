@@ -1,5 +1,5 @@
 /**
- * Collections (docs/protocol.md, Section 12): a description, commits,
+ * Collections (docs/protocol/v3.md, Section 12): a description, commits,
  * layouts, and the files and assets they name. A collection never points at
  * another: a fork copies its parent's commits and layout, which are small, and
  * names the same sorted-record-files, which are stored once.

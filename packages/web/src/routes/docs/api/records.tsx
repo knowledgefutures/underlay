@@ -369,7 +369,7 @@ export default function DocsApiRecords() {
       </ul>
       <p>
         The rules are in the protocol,{' '}
-        <Link to="/docs/protocol/records#links" className="text-link underline">
+        <Link to="/docs/protocol/v3/records#links" className="text-link underline">
           Links
         </Link>
         .

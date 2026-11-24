@@ -1,7 +1,7 @@
 /**
  * Push routes, mounted at /api/collections.
  *
- * Delta push, the protocol's one way to publish (docs/protocol-v2.md, section 11.4):
+ * Delta push, the protocol's one way to publish (docs/protocol/v2.md, section 11.4):
  *   POST   /:owner/:slug/push                      open a session against a base
  *   POST   /:owner/:slug/push/:sid/records         NDJSON {id,type,data,private?}
  *   POST   /:owner/:slug/push/:sid/deletes         NDJSON {type,id}
@@ -55,7 +55,7 @@ const MAX_OPEN_BYTES = 8 * 1024 * 1024
 export const commitConfig = { asyncAbove: 100_000 }
 
 /**
- * This node's push limits, advertised when a session opens (docs/protocol-v2.md,
+ * This node's push limits, advertised when a session opens (docs/protocol/v2.md,
  * section 11.4). Read on each call: tests lower some of them.
  */
 export const pushLimits = (session: Pick<SessionRow, 'inKeyOrder'> = { inKeyOrder: false }) => ({

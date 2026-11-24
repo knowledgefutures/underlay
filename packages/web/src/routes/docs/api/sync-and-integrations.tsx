@@ -218,7 +218,7 @@ export default function DocsApiSyncAndIntegrations() {
         current layout (<code>GET …/:owner/:slug/layout</code>), and fetches the files a version
         names (<code>GET …/:owner/:slug/record-files/:id</code>). These are the protocol&rsquo;s
         routes:{' '}
-        <Link to="/docs/protocol/push-and-pull#pull" className="text-link underline">
+        <Link to="/docs/protocol/v3/push-and-pull#pull" className="text-link underline">
           Push and pull
         </Link>
         . <code>GET …/:owner/:slug/log</code> answers as the commits route; packs belong to an
@@ -492,12 +492,12 @@ export default function DocsApiSyncAndIntegrations() {
         An organization can add its own S3-compatible buckets as <strong>locations</strong> and{' '}
         <strong>mirror</strong> collections to them: Underlay keeps a copy of each collection there,
         its signed commits, current layout, record files, and assets, at the keys the protocol uses
-        (see <Link to="/docs/protocol/repositories">Layouts and collections</Link>), so anyone with
-        access to the bucket can read every version without Underlay. A new version is copied after
-        it is published. The credentials must be able to both write and read the bucket. Managing
-        locations and mirrors takes an owner or admin of the organization, signed in or with an
-        admin API key not confined to specific collections. Removing a location or mirror never
-        deletes what was copied to the bucket.
+        (see <Link to="/docs/protocol/v3/repositories">Layouts and collections</Link>), so anyone
+        with access to the bucket can read every version without Underlay. A new version is copied
+        after it is published. The credentials must be able to both write and read the bucket.
+        Managing locations and mirrors takes an owner or admin of the organization, signed in or
+        with an admin API key not confined to specific collections. Removing a location or mirror
+        never deletes what was copied to the bucket.
       </p>
 
       <Endpoint route="GET | POST /api/orgs/:org/locations" scope="Auth: org owner or admin">

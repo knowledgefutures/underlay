@@ -1,5 +1,5 @@
 /**
- * Lines, keys, and entries (docs/protocol.md, Sections 3.2, 3.3, and 6.2).
+ * Lines, keys, and entries (docs/protocol/v3.md, Sections 3.2, 3.3, and 6.2).
  *
  * A sorted-record-file holds record lines (v2's canonical record, so record
  * hashes are v2's) and removal lines. Each line has an entry in the file's key

@@ -412,7 +412,7 @@ export async function buildVersion(repo: Repo, input: BuildInput): Promise<Build
   await sinks.public.flush()
   await sinks.private.flush()
 
-  // Record ids are unique per type across both sets (docs/protocol-v2.md §4). The
+  // Record ids are unique per type across both sets (docs/protocol/v2.md §4). The
   // base holds that, so only ids entering a set can break it: probe the other set
   // for each, O(changes × height), and only for types with records in both.
   // Parallel commits (prebuilt) take plain types only; their units don't move ids.
