@@ -43,7 +43,7 @@ previous, base = that SHA-256 alone (bare hex)`
 
 export default function ProtocolVersions() {
   return (
-    <DocsLayout title="Files and versions" eyebrow="Protocol v3 · §§3, 4, 6">
+    <DocsLayout title="Files and versions" eyebrow="Protocol · Sections 6, 7, and 10">
       <h2 id="sorted-record-files">Sorted-record-files</h2>
       <p>
         A sorted-record-file holds <Link to="/docs/protocol/records#records-and-lines">lines</Link>{' '}

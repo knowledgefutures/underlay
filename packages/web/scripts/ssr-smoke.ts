@@ -318,9 +318,15 @@ try {
     {
       path: '/docs/protocol',
       status: 200,
-      has: ['The Underlay protocol', 'docs-nav', 'Protocol v3', 'Push and pull'],
+      has: ['The Underlay protocol', 'docs-nav', 'Protocol · Overview', 'Push and pull'],
+      lacks: ['Protocol v3', 'v2 §'],
     },
-    { path: '/docs/protocol/records', status: 200, has: ['Input rules', 'duplicate_key'] },
+    {
+      path: '/docs/protocol/records',
+      status: 200,
+      has: ['Input rules', 'duplicate_key', 'Sections 2 to 5'],
+      lacks: ['v2&rsquo;s', 'Unlike v2'],
+    },
     { path: '/docs/protocol/versions', status: 200, has: ['ul:ver:', 'Sorted-record-files'] },
     {
       path: '/docs/protocol/records',

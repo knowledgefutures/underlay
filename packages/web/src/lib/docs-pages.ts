@@ -259,7 +259,7 @@ export const docSections: { section: string; pages: DocPage[] }[] = [
         title: 'Protocol',
         label: 'Overview',
         href: '/docs/protocol',
-        blurb: 'Protocol v3 (draft): scope, conformance, terminology, what is not available yet',
+        blurb: 'The protocol: scope, conformance, terminology, what is not available yet',
         headings: [
           'Conformance',
           'Terminology',

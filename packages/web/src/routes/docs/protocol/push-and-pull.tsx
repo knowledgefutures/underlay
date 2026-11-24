@@ -71,7 +71,7 @@ GET <collection>/record-files/<file id>        a sorted-record-file's bytes (Ran
 
 export default function ProtocolPushPull() {
   return (
-    <DocsLayout title="Push and pull" eyebrow="Protocol v3 · underlay.org today">
+    <DocsLayout title="Push and pull" eyebrow="Protocol · Section 8 and underlay.org">
       <h2 id="delta-push">Delta push</h2>
       <p>
         On underlay.org you make a commit through a push session: open it against the head, upload
@@ -112,7 +112,7 @@ export default function ProtocolPushPull() {
         </tbody>
       </table>
       <p>
-        Each type MUST be a valid v3 type (see{' '}
+        Each type MUST be a valid type (see{' '}
         <Link to="/docs/protocol/records#reserved-types">Reserved types</Link>), and each schema
         MUST pass the <Link to="/docs/protocol/records#schemas">schema rules</Link>. A public
         collection refuses a schema with a root <code>&quot;private&quot;: true</code>.
@@ -136,10 +136,10 @@ export default function ProtocolPushPull() {
           schema, and its type MUST be in the session&rsquo;s type set.
         </li>
         <li>
-          The envelope is v2&rsquo;s: other members are ignored, and a <code>private</code> member,
-          if present, MUST be a boolean. In a public collection a line with{' '}
-          <code>&quot;private&quot;: true</code> is refused (422): make the collection private, or
-          push to a private collection. In a private collection the mark changes nothing.
+          The envelope is looser than an upload&rsquo;s: other members are ignored, and a{' '}
+          <code>private</code> member, if present, MUST be a boolean. In a public collection a line
+          with <code>&quot;private&quot;: true</code> is refused (422): make the collection private,
+          or push to a private collection. In a private collection the mark changes nothing.
         </li>
         <li>
           A record whose <code>data</code> has top-level members absent from its schema&rsquo;s root{' '}
@@ -300,9 +300,9 @@ export default function ProtocolPushPull() {
           records through the records routes.
         </li>
         <li>
-          <code>GET …/log</code> answers as <code>GET …/commits</code> for a v3 collection. Packs (
-          <code>GET …/versions/&lt;v&gt;/pack</code>) are v2&apos;s, and answer <code>409</code> for
-          v3.
+          <code>GET …/log</code> answers as <code>GET …/commits</code>. Packs (
+          <code>GET …/versions/&lt;v&gt;/pack</code>) belong to an earlier form, and answer{' '}
+          <code>409</code>.
         </li>
         <li>
           To copy a version without following its log, read{' '}
@@ -347,8 +347,7 @@ export default function ProtocolPushPull() {
           (with <code>Retry-After</code>).
         </li>
         <li>
-          <code>501</code>: a route not available for v3 collections yet (code{' '}
-          <code>not_on_v3</code>).
+          <code>501</code>: a route not available yet (code <code>not_on_v3</code>).
         </li>
       </ul>
 

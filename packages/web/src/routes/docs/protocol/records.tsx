@@ -138,7 +138,7 @@ const rules: [string, string, string][] = [
 
 export default function ProtocolRecords() {
   return (
-    <DocsLayout title="Records and schemas" eyebrow="Protocol v3 · §2; v2 §§2–5, 7">
+    <DocsLayout title="Records and schemas" eyebrow="Protocol · Sections 2 to 5">
       <h2 id="canonical-json">Canonical JSON</h2>
       <p>
         Each hashed JSON document MUST be serialized as{' '}
@@ -166,15 +166,15 @@ export default function ProtocolRecords() {
         <li>
           A <strong>record line</strong> is the record&rsquo;s canonical form: a fixed envelope,{' '}
           <code>id</code>, <code>type</code>, <code>data</code> in that order, with only{' '}
-          <code>data</code> canonicalized. The record hash is v2&rsquo;s.
+          <code>data</code> canonicalized. The record hash is the SHA-256 of the line.
         </li>
         <li>
           A <strong>removal line</strong> says the record with that key is removed.
         </li>
         <li>
           An upload&rsquo;s input lines are a record, <code>{'{"id", "type", "data"}'}</code>, or a
-          removal, <code>{'{"id", "type", "removed": true}'}</code>, with exactly those members.
-          Unlike v2, a line with any other member is refused: there is no <code>private</code>.
+          removal, <code>{'{"id", "type", "removed": true}'}</code>, with exactly those members. A
+          line with any other member is refused.
         </li>
       </ul>
       <p>Lines of one file, in key order:</p>
@@ -263,7 +263,7 @@ export default function ProtocolRecords() {
         the wrong members; <code>record_too_large</code>. The codes are part of the protocol.
       </p>
       <p>
-        The push API on underlay.org takes record lines under v2&rsquo;s envelope instead (see{' '}
+        The push API on underlay.org takes record lines with a looser envelope (see{' '}
         <Link to="/docs/protocol/push-and-pull#records-and-deletes">Push and pull</Link>), and
         writes them into files as the lines above.
       </p>
@@ -281,17 +281,14 @@ export default function ProtocolRecords() {
           units. A <code>pattern</code> inside <code>const</code>, <code>enum</code>,{' '}
           <code>default</code>, or <code>examples</code> is data and is not limited;
         </li>
-        <li>the type it is given for is not a valid type;</li>
-        <li>
-          its root <code>private</code> is present and not a boolean, or a schema that is the value
-          of a member of a <code>properties</code> object, at any depth, has{' '}
-          <code>&quot;private&quot;: true</code>.
-        </li>
+        <li>the type it is given for is not a valid type.</li>
       </ul>
       <p>
-        A root <code>private</code> has no meaning in v3. On underlay.org a public collection
-        refuses a schema with <code>&quot;private&quot;: true</code>: make the collection private
-        instead.
+        A collection is wholly public or private: nothing in a schema makes a type or a field
+        private. underlay.org refuses a schema in a public collection whose root has{' '}
+        <code>&quot;private&quot;: true</code>, and any schema with{' '}
+        <code>&quot;private&quot;: true</code> on a property, since an author who writes either
+        means to hide data that would be published.
       </p>
       <p>Within a version:</p>
       <ul>

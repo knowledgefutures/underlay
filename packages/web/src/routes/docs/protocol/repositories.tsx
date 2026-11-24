@@ -21,7 +21,10 @@ sweep/                                 the sweep's own state`
 
 export default function ProtocolRepositories() {
   return (
-    <DocsLayout title="Layouts and collections" eyebrow="Protocol v3 · §§5, 7–9">
+    <DocsLayout
+      title="Layouts and collections"
+      eyebrow="Protocol · Sections 9, 11, 12, and Appendix C"
+    >
       <h2 id="layout-files">Layout files</h2>
       <p>A layout file is the JCS of:</p>
       <CodeBlock>{layoutFile}</CodeBlock>

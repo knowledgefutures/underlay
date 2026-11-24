@@ -4,20 +4,19 @@ import DocsLayout from '~/components/DocsLayout'
 
 export default function ProtocolOverview() {
   return (
-    <DocsLayout title="The Underlay protocol" eyebrow="Protocol v3 · Draft">
+    <DocsLayout title="The Underlay protocol" eyebrow="Protocol · Overview">
       <p>
-        Version 3 of the Underlay protocol defines four things: the{' '}
-        <strong>sorted-record-file</strong>, which holds records in key order; the{' '}
-        <strong>commit</strong>, which names the files one upload added; the{' '}
-        <strong>layout file</strong>, which lists the files that hold a collection after a rebuild;
-        and the <strong>collection</strong> that holds them. A collection is a log of numbered
-        commits, and a version is the log up to one commit.
+        The Underlay protocol defines four things: the <strong>sorted-record-file</strong>, which
+        holds records in key order; the <strong>commit</strong>, which names the files one upload
+        added; the <strong>layout file</strong>, which lists the files that hold a collection after
+        a rebuild; and the <strong>collection</strong> that holds them. A collection is a log of
+        numbered commits, and a version is the log up to one commit.
       </p>
       <p>
         It does not define how a server keeps these objects, when it rebuilds, whether it stores
         identical files once, who may read a collection, or how it bills. Those are choices of each
-        server. The specification defines records, canonical JSON, the input rules, key order, and
-        schemas itself: it is read without the version 2 document.
+        server. The specification is complete in itself: records, canonical JSON, the input rules,
+        key order, and schemas are all defined in it, and nothing needs an earlier document.
       </p>
       <p>
         These pages restate the specification, <code>docs/protocol.md</code>, section by section. It
@@ -26,8 +25,9 @@ export default function ProtocolOverview() {
         authoritative.
       </p>
       <p>
-        Collections on underlay.org moved from protocol v2 to v3 on 2026-11-13. Their versions kept
-        their semvers. Responses give the <code>ul:ver:</code> id.
+        Every object the protocol defines carries <code>&quot;underlay&quot;: 3</code>, the
+        protocol&rsquo;s version. Every collection on underlay.org is held in this form; ids written
+        in earlier forms were rewritten on 2026-11-24, and their old version ids still resolve.
       </p>
 
       <h2 id="conformance">Conformance</h2>
@@ -118,25 +118,26 @@ export default function ProtocolOverview() {
         </li>
       </ul>
       <p>
-        Version 3 has no single hash over a version&rsquo;s records (a content root) and no proof
+        The protocol has no single hash over a version&rsquo;s records (a content root) and no proof
         that a record is in a version. Neither is available yet.
       </p>
 
       <h2 id="contents">Contents</h2>
       <ul>
         <li>
-          <Link to="/docs/protocol/records">Records and schemas</Link> (§2; v2 §§2–5, 7): canonical
+          <Link to="/docs/protocol/records">Records and schemas</Link> (Sections 2 to 5): canonical
           JSON, input rules, record and removal lines, reserved types, key order, schemas,
           validation, assets, Underlay ids, links, and asset references.
         </li>
         <li>
-          <Link to="/docs/protocol/versions">Files and versions</Link> (§§3, 4, 6): the
+          <Link to="/docs/protocol/versions">Files and versions</Link> (Sections 6, 7, and 10): the
           sorted-record-file, commits, version ids, base, signatures, naming a file, semver, and
           reading a version.
         </li>
         <li>
-          <Link to="/docs/protocol/repositories">Layouts and collections</Link> (§§5, 7–9): layout
-          files, rebuilds, collections and forks, and the reference server&rsquo;s storage.
+          <Link to="/docs/protocol/repositories">Layouts and collections</Link> (Sections 9, 11, and
+          12, and Appendix C): layout files, rebuilds, collections and forks, and the reference
+          server&rsquo;s storage.
         </li>
         <li>
           <Link to="/docs/protocol/push-and-pull">Push and pull</Link>: how a commit is made on

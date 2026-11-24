@@ -2,9 +2,9 @@
 
 **Version:** 3 (the `underlay` member of every object this document defines).
 
-**Status:** Draft, 2026-11-23. This document replaces `protocol-v3.md` and, for everything
-version 3 uses, `protocol-v2.md`. It is meant to be read alone: nothing here depends on an
-earlier version's document, on the reference implementation, or on a server being online.
+**Status:** Draft, 2026-11-24. This document is meant to be read alone: nothing here depends
+on another document, on the reference implementation, or on a server being online. Earlier
+forms of the protocol are history (Appendix D).
 
 **Change control.** A change to any rule that alters which inputs are accepted, what bytes are
 written, or what is hashed needs a new protocol version. Clarifications that change none of

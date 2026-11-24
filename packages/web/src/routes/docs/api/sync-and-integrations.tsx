@@ -221,9 +221,9 @@ export default function DocsApiSyncAndIntegrations() {
         <Link to="/docs/protocol/push-and-pull#pull" className="text-link underline">
           Push and pull
         </Link>
-        . <code>GET …/:owner/:slug/log</code> answers as the commits route for a v3 collection;
-        packs are v2&rsquo;s and answer <code>409</code>. To copy a version without following its
-        log, use the export below, or{' '}
+        . <code>GET …/:owner/:slug/log</code> answers as the commits route; packs belong to an
+        earlier form and answer <code>409</code>. To copy a version without following its log, use
+        the export below, or{' '}
         <Link
           to="/docs/api/versions#get-api-collections-owner-slug-versions-n-records-ndjson"
           className="text-link underline"
