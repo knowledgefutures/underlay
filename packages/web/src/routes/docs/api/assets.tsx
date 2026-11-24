@@ -38,7 +38,7 @@ const putRes = `{
 }`
 
 const uploadReq = `{
-  "hash": "sha256:a1b2c3d4e5f6...",
+  "hash": "a1b2c3d4e5f6...",
   "size": 21474836480,
   "mediaType": "video/mp4"
 }`
@@ -97,7 +97,6 @@ const assetRefExample = `{
 const missingAssetsRes = `{
   "error": "Missing files",
   "assetsNeeded": ["a1b2c3d4e5f6..."],
-  "filesNeeded": ["a1b2c3d4e5f6..."],
   "statusCode": 422
 }`
 
@@ -109,11 +108,6 @@ export default function DocsApiAssets() {
         attachments. Each is named by the SHA-256 of its bytes, <code>ul:asset:&lt;hex&gt;</code>,
         so identical bytes are stored only once. Upload assets before committing a version whose
         records attach them.
-      </p>
-      <p>
-        The older <code>…/files/…</code> paths and file-named fields still work: each route below
-        also answers at <code>/files/</code> in place of <code>/assets/</code>, and a multipart
-        upload may name its part <code>file</code>.
       </p>
 
       <h3>Workflow</h3>
@@ -166,8 +160,7 @@ export default function DocsApiAssets() {
                 <code>:hash</code>
               </td>
               <td>
-                SHA-256 hash: bare hex, or prefixed with <code>ul:asset:</code> or{' '}
-                <code>sha256:</code>
+                SHA-256 hash: bare hex, or prefixed with <code>ul:asset:</code>
               </td>
             </tr>
           </tbody>
@@ -285,8 +278,7 @@ export default function DocsApiAssets() {
         <p>
           Send the bytes as the raw request body with the appropriate <code>Content-Type</code>{' '}
           header, or as <code>multipart/form-data</code> with the bytes in an <code>asset</code>{' '}
-          part (or <code>file</code>, the older name; sending both is <code>400</code>). HTML,
-          XHTML, SVG, and XML types are stored as <code>application/octet-stream</code>.
+          part. HTML, XHTML, SVG, and XML types are stored as <code>application/octet-stream</code>.
         </p>
         <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
           <code>{putExample}</code>
@@ -444,8 +436,8 @@ export default function DocsApiAssets() {
         must be held by this collection: named by the version the push builds on, or uploaded to it
         (a <code>PUT</code> or a verified direct upload). An asset that only another collection
         holds does not count. If any are missing, the commit returns <code>422</code> listing up to
-        100 of them in <code>assetsNeeded</code> (and, under its older name,{' '}
-        <code>filesNeeded</code>), and the session stays open: upload them and commit it again.
+        100 of them in <code>assetsNeeded</code>, and the session stays open: upload them and commit
+        it again.
       </p>
       <p>
         The collection serves an asset as the <code>mediaType</code> its records declare, over the{' '}
@@ -461,8 +453,8 @@ export default function DocsApiAssets() {
         A <code>$asset</code> that is not a <code>ul:asset:</code> id is refused when you push the
         record (<code>422</code>), with a message such as{' '}
         <code>$asset at /pdf is a sha256: hash: write ul:asset:&lt;hex&gt;</code>. So is an object
-        with both <code>$link</code> and <code>$asset</code>. Records written with the older form,{' '}
-        <code>{'{"$file": "sha256:<hex>"}'}</code>, are read the same way and are not checked.
+        with both <code>$link</code> and <code>$asset</code>, and so is a <code>$file</code>.
+        Records written before November 2026 used <code>$file</code>; they were rewritten.
       </p>
       <p>
         <code>{'{"$link": "ul:asset:<hex>"}'}</code> names the same asset but only points at it: it
@@ -471,8 +463,7 @@ export default function DocsApiAssets() {
         <Link to="/docs/api/records#links-in-records" className="text-link underline">
           Links in records
         </Link>
-        ). Wherever a route takes an asset hash, <code>ul:asset:</code> and <code>sha256:</code>{' '}
-        prefixes are accepted.
+        ). Wherever a route takes an asset hash, it takes bare hex or a <code>ul:asset:</code> id.
       </p>
     </DocsLayout>
   )

@@ -1,5 +1,5 @@
 /**
- * The sorted-record-file (docs/protocol-v3.md, Section 3): record blocks, key
+ * The sorted-record-file (docs/protocol.md, Section 6): record blocks, key
  * blocks, a footer, and a trailer. This is the content side and the writer: what
  * the format fixes, so that the same rows give the same file id on any machine.
  *

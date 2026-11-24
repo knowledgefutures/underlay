@@ -226,8 +226,7 @@ writeFileSync(dir + '/scratch.ndjson', records.map((r) => JSON.stringify(r)).joi
         that holds an asset has the schema{' '}
         <code>{'{"type": "object", "required": ["$asset"]}'}</code>. A record attaching an asset the
         run didn&apos;t write, and that isn&apos;t here already, stops the save and names the
-        record. The older <code>$UNDERLAY_OUT/files/</code> folder and{' '}
-        <code>{'{"$file": "sha256:<hex>"}'}</code> still work.
+        record, and so does a record with a <code>$file</code>.
       </p>
       <CodeBlock>{`const sha = createHash('sha256').update(pdf).digest('hex')
 writeFileSync(\`\${process.env.UNDERLAY_OUT}/assets/\${sha}.pdf\`, pdf)

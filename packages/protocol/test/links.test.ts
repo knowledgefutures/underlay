@@ -1,4 +1,4 @@
-/** Underlay ids, links, and asset references in record data (docs/protocol-v3.md, Sections 2.1 to 2.3). */
+/** Underlay ids, links, and asset references in record data (docs/protocol.md, Sections 5.1 to 5.3). */
 import { describe, expect, it } from 'vitest'
 
 import {

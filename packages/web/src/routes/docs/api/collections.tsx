@@ -316,7 +316,6 @@ export default function DocsApiCollections() {
         </p>
         <p>
           <code>assetCount</code> is the number of assets (PDFs, images) the version holds.
-          Responses on this page also carry it as <code>fileCount</code>, its older name.
         </p>
       </div>
 

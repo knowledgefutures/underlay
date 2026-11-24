@@ -65,8 +65,8 @@ left alone. A script runs in its folder and writes NDJSON to
 `$UNDERLAY_OUT/<authority>/<org>/<name>.ndjson`: the whole collection by default
 (`mode additions` for changes only; `types` and `where` to narrow what it is the whole of).
 A record attaches an asset with `{"$asset": "ul:asset:<sha256 hex>"}` in its data, and the
-script writes the bytes anywhere under `$UNDERLAY_OUT/assets/` (`{"$file": "sha256:<hex>"}`
-and `$UNDERLAY_OUT/files/` still work).
+script writes the bytes anywhere under `$UNDERLAY_OUT/assets/`. A record with a `$file` stops
+the save.
 `AGENTS.md` in home says the same for agents.
 
 ## Code

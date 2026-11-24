@@ -1,5 +1,5 @@
 /**
- * The deletion sweep and storage accounting (docs/protocol-v3.md, Section 9).
+ * The deletion sweep and storage accounting (docs/protocol.md, Appendix C).
  *
  * Sorted-record-files and assets are stored once and shared, so nothing is
  * deleted when a collection stops naming it. One sweeper, run in passes, finds

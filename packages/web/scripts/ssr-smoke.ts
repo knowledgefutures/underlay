@@ -325,8 +325,8 @@ try {
     {
       path: '/docs/protocol/records',
       status: 200,
-      has: ['Underlay ids', 'ul:asset:', 'Asset references', '$file references'],
-      lacks: ['ul:file:'],
+      has: ['Underlay ids', 'ul:asset:', 'Asset references', '$file references', 'is not read'],
+      lacks: ['ul:file:', 'read the same way'],
     },
     { path: '/docs/api/records', status: 200, has: ['Links in records', 'GET /api/links/resolve'] },
     // The Files API page is now the Assets API page: its old URL redirects.
@@ -339,6 +339,7 @@ try {
         'POST /api/collections/:owner/:slug/assets/presign',
         'Asset references in records',
       ],
+      lacks: ['filesNeeded', 'answers at <code>/files/</code>'],
     },
     { path: '/docs/protocol/repositories', status: 200, has: ['Layout files', 'Rebuilds'] },
     {

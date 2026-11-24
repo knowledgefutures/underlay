@@ -1,6 +1,6 @@
 /**
  * Bucket mirrors of v3 collections (v3-deploy-plan.md, decision 8). A v3 mirror is the
- * collection as docs/protocol-v3.md Section 8 defines it, at the keys Section 9 stores it
+ * collection as docs/protocol.md Section 12 defines it, at the keys Appendix C stores it
  * under: its description, its commits, its current layout, and the sorted-record-files and
  * assets those name. A reader with `@underlay/protocol` opens the bucket as it opens the
  * server's own store.
@@ -164,7 +164,7 @@ export async function v3MirrorStep(
   await copyObject(v3.descriptionKey(id))
   for (let n = Math.max(1, p.syncedSeq + 1); n <= head; n++) {
     await copyObject(v3.commitKey(id, n))
-    // Its receipt with it (protocol-v3 4.6): what is signed of a commit its author built.
+    // Its receipt with it (docs/protocol.md 8.2): what is signed of a commit its author built.
     const receipt = await store.get(v3.receiptKey(id, n))
     if (receipt) await dest.put(v3.receiptKey(id, n), await receipt.bytes(), json)
   }

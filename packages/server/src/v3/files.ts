@@ -1,5 +1,5 @@
 /**
- * Files of a v3 collection: its assets (docs/protocol-v3.md, Section 1). An asset belongs
+ * Files of a v3 collection: its assets (docs/protocol.md, Section 1.2). An asset belongs
  * to a collection because a `$asset` row names it, whether or not a record references it;
  * its bytes are at `assets/<sha256>` in the v3 area, and its size and media type are in
  * the row. Nothing here reads v2's `files` table or `files/` keys, which v2's cleanup may

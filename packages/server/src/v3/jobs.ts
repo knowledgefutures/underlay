@@ -2,10 +2,11 @@
  * v3's background work (v3-deploy-plan.md, Phase 1), on the bulk queue (`v3.mergeUnit` on
  * the v3 queue and its pool):
  *
- *   v3.rebuild         after each commit: plan a round of the rebuild policy (Section 9).
- *                      A small round merges here and creates its layout; a large one is
- *                      cut into key ranges, a `v3.mergeUnit` job for each, so no job does
- *                      more than `unitBytes` of lines (v3-deploy-plan.md, Phase 2).
+ *   v3.rebuild         after each commit: plan a round of the rebuild policy
+ *                      (docs/protocol.md, Appendix C). A small round merges here and
+ *                      creates its layout; a large one is cut into key ranges, a
+ *                      `v3.mergeUnit` job for each, so no job does more than `unitBytes`
+ *                      of lines (v3-deploy-plan.md, Phase 2).
  *   v3.mergeUnit       one key range of a round's merge; the last to finish queues:
  *   v3.finishRebuild   create the round's layout from the units' outputs, prune old
  *                      layout files, and queue the next round (a merge can make another due)
@@ -62,8 +63,8 @@ registerJob('v3.finishRebuild', async (job, ports) => {
 const SWEEP_LOCK = 'v3-sweep/running'
 
 registerJob('v3.sweep', async (_job, ports) => {
-  // One sweeper at a time (Section 9): the cron queues a pass every tick, and a long pass
-  // must not have a second beside it. A lock left by a pass that died is cleared once stale.
+  // One sweeper at a time (docs/protocol.md, Appendix C): the cron queues a pass every tick,
+  // and a long pass must not have a second beside it. A lock left by a pass that died is cleared once stale.
   const internal = ports.stores.internal
   if (!(await createObject(internal, SWEEP_LOCK, String(Date.now())))) {
     const held = await internal.get(SWEEP_LOCK)
@@ -245,7 +246,8 @@ export async function finishRound(ports: Ports, collectionId: string, planId: st
 
 /**
  * Delete all but the newest `keep` layout files of a collection. Each layout is complete
- * and only the newest is read (Section 5); the sweep lists files by the newest only.
+ * and only the newest is read (docs/protocol.md, Section 9); the sweep lists files by the
+ * newest only.
  *
  * With the low numbers gone a reader cannot find a layout by probing up from 1: it needs
  * the hint. So nothing is deleted until the hint names the newest layout (a hint's write

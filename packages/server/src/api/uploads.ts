@@ -7,14 +7,14 @@
  *   POST   /:owner/:slug/uploads/:id/record-files/:fid/complete  {upload_id, parts: [{n, etag}]}
  *   POST   /:owner/:slug/uploads/:id/commit                      {record_files: [FileRef…], change?} (a change
  *                                                                unsigned), or {record_files, commit}: a commit
- *                                                                its author built (protocol-v3 4.6), stored
+ *                                                                its author built (docs/protocol.md 8.1), stored
  *                                                                unchanged or refused with 409 and the newest version
  *   GET    /:owner/:slug/uploads/:id                             status, files present, result
  *   DELETE /:owner/:slug/uploads/:id                             abandon (while it is open)
  *
  * The files are sorted-record-files.
  *
- * A file's id is its content's (docs/protocol-v3.md, 3.4); the client builds it with the
+ * A file's id is its content's (docs/protocol.md, 6.4); the client builds it with the
  * library. The commit is verified and landed by jobs: poll the status until `committed`.
  */
 import { v3 } from '@underlay/protocol'

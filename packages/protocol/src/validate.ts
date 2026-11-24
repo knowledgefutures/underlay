@@ -1,5 +1,5 @@
 /**
- * Record validation against type schemas (protocol v2, section 5).
+ * Record validation against type schemas (docs/protocol.md, Section 4; protocol v2, section 5).
  *
  * v1 validated with AJV, which compiles every schema to JavaScript with
  * `new Function`. Cloudflare Workers forbid that, so v2 uses
@@ -597,7 +597,7 @@ export function checkSchemaBounds(schemas: Record<string, unknown>): string | nu
 }
 
 /**
- * Every acceptance check of protocol v2 sections 5 and 5.1 on one type's
+ * Every acceptance check of docs/protocol.md Section 4.1 (v2 sections 5 and 5.1) on one type's
  * schema: `checkSchema`, then what compiling checks (an object at the root, a
  * draft-07 `$schema`, the meta-schema, `u`-flag patterns, `$ref`s that
  * resolve). The compiled validator is cached for the records that follow.

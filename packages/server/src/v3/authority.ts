@@ -1,5 +1,5 @@
 /**
- * A collection's authority, and the receipts it writes (protocol-v3 4.6 and 4.7).
+ * A collection's authority, and the receipts it writes (docs/protocol.md 8.1 and 8.2).
  *
  * The authority is the one server that accepts a collection's versions: `authority` in its
  * description, or, without it, the server that holds it. This server accepts a version only

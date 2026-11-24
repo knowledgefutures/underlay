@@ -239,11 +239,6 @@ export default function DocsApi() {
   "statusCode": 401
 }`}</code>
       </pre>
-      <p>
-        Assets (PDFs, images) were first called files in the API. The older <code>…/files/…</code>{' '}
-        paths and file-named fields (<code>filesNeeded</code>, <code>fileCount</code>) still work,
-        beside the asset names.
-      </p>
 
       <p>Common status codes:</p>
       <ul>

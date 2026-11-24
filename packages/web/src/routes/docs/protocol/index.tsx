@@ -16,20 +16,18 @@ export default function ProtocolOverview() {
       <p>
         It does not define how a server keeps these objects, when it rebuilds, whether it stores
         identical files once, who may read a collection, or how it bills. Those are choices of each
-        server. Records, canonical JSON, the input rules, key order, and schemas are those of
-        version 2 unless version 3 changes them.
+        server. The specification defines records, canonical JSON, the input rules, key order, and
+        schemas itself: it is read without the version 2 document.
       </p>
       <p>
-        These pages restate the specification, <code>docs/protocol-v3.md</code>, section by section.
-        It is a draft: values and formats may still change, and a change to the file format changes
+        These pages restate the specification, <code>docs/protocol.md</code>, section by section. It
+        is a draft: values and formats may still change, and a change to the file format changes
         file ids. Where these pages and the specification differ, the specification is
         authoritative.
       </p>
       <p>
         Collections on underlay.org moved from protocol v2 to v3 on 2026-11-13. Their versions kept
-        their semvers, and their old <code>ulv2:</code> version ids still resolve wherever the API
-        takes a version id. Responses give the <code>ul:ver:</code> id (written <code>ulv3:</code>{' '}
-        before November 18, 2026, which also still resolves).
+        their semvers. Responses give the <code>ul:ver:</code> id.
       </p>
 
       <h2 id="conformance">Conformance</h2>
@@ -158,7 +156,7 @@ export default function ProtocolOverview() {
 
       <h2 id="reference">Reference</h2>
       <p>
-        Specification: <code>docs/protocol-v3.md</code> in the{' '}
+        Specification: <code>docs/protocol.md</code> in the{' '}
         <a href="https://github.com/knowledgefutures/underlay">Underlay repository</a>. Reference
         implementation: <code>packages/protocol/src/v3/</code> in the same repository, which runs in
         Node and Cloudflare Workers. It is not published to npm. Test vectors:{' '}

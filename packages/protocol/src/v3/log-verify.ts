@@ -1,5 +1,5 @@
 /**
- * Checking a collection's log (docs/protocol-v3.md, Sections 4 and 9): the chain of
+ * Checking a collection's log (docs/protocol.md, Section 7 and Appendix C): the chain of
  * commits, and, given keys, who signed each, by its own signature or by its receipt.
  */
 import { jcs } from '../jcs.js'
@@ -43,7 +43,7 @@ export interface VerifyLogOptions {
   serverKeys?: PublicKeyInfo[]
   /**
    * With `serverKeys`: a commit the author built, which carries no server signature, counts
-   * as signed when its receipt (Section 4.7) is signed by one of them.
+   * as signed when its receipt (Section 8.2) is signed by one of them.
    */
   receipts?: boolean
   /** If given, every change must be signed by one of these keys (authors'). */

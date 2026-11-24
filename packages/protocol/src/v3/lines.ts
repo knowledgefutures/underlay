@@ -1,5 +1,5 @@
 /**
- * Lines, keys, and entries (docs/protocol-v3.md, Sections 2 and 3.2).
+ * Lines, keys, and entries (docs/protocol.md, Sections 3.2, 3.3, and 6.2).
  *
  * A sorted-record-file holds record lines (v2's canonical record, so record
  * hashes are v2's) and removal lines. Each line has an entry in the file's key
@@ -32,7 +32,7 @@ export interface Entry extends Key {
   commit?: number
 }
 
-/** Key order: by type, then id, each as UTF-8 bytes (v2 Section 7). */
+/** Key order: by type, then id, each as UTF-8 bytes (Section 3.3). */
 export function compareKeys(aType: string, aId: string, bType: string, bId: string): number {
   return aType === bType ? compareUtf8(aId, bId) : compareUtf8(aType, bType)
 }

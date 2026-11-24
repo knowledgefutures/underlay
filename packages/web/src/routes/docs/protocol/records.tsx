@@ -381,9 +381,8 @@ export default function ProtocolRecords() {
       </p>
       <p>
         Informative. In URL paths and version selectors, underlay.org takes a <code>ul:</code> id or
-        bare hex, and also the older <code>sha256:</code>, <code>ulv3:</code>, and{' '}
-        <code>ulv2:</code> forms. <code>/api/links/resolve</code> needs a <code>ul:</code> id, since
-        bare hex doesn&rsquo;t say what kind of thing it names.
+        bare hex. <code>/api/links/resolve</code> needs a <code>ul:</code> id, since bare hex
+        doesn&rsquo;t say what kind of thing it names.
       </p>
 
       <h2 id="links">Links</h2>
@@ -600,10 +599,12 @@ export default function ProtocolRecords() {
 
       <h3 id="file-references">$file references</h3>
       <p>
-        Records written before 2026-11-22 attach with <code>{'{"$file": "sha256:<hex>"}'}</code> (v2
-        Section 4). It is read the same way as <code>{'{"$asset": "ul:asset:<hex>"}'}</code>, and is
-        not checked: as in v2, a <code>$file</code> with any other value is not a reference. New
-        records SHOULD use <code>$asset</code>.
+        A <code>$file</code> member is not an asset reference, and a server refuses a record that
+        holds one, with a message such as{' '}
+        <code>
+          {'$file at /pdf is not read: attach an asset with {"$asset": "ul:asset:<hex>"}'}
+        </code>
+        . Records written before November 2026 used <code>$file</code>; they were rewritten.
       </p>
     </DocsLayout>
   )

@@ -13,7 +13,7 @@ import { isPrivateSchema } from '../push/changes.js'
 
 /**
  * The refusal for a session whose schemas v3 cannot take, or null: a type name v3's keys
- * refuse (docs/protocol-v3.md, Section 2), or a type marked private in a public collection.
+ * refuse (docs/protocol.md, Section 3.4), or a type marked private in a public collection.
  */
 export function v3SchemaError(
   collectionPublic: boolean,
@@ -43,5 +43,5 @@ export function privateMarkError(
 export const PRIVATE_RECORD_ERROR =
   'This collection is public, and keeps no private records. Make the collection private, or push them to a private collection.'
 
-/** Where an asset's bytes are kept in the v3 area (docs/protocol-v3.md, Section 9). */
+/** Where an asset's bytes are kept in the v3 area (docs/protocol.md, Appendix C). */
 export const assetKey = (sha256: string) => `assets/${sha256}`

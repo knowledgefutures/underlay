@@ -393,10 +393,7 @@ export default function DocsApiRecords() {
               <td className="pr-4 align-top">
                 <code>to</code>
               </td>
-              <td>
-                The Underlay id. <code>ulv3:</code> and <code>ulv2:</code> version ids are taken
-                too.
-              </td>
+              <td>The Underlay id.</td>
             </tr>
             <tr>
               <td className="pr-4 align-top">

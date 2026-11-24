@@ -50,7 +50,7 @@ const openMembers: [string, string][] = [
   ],
   [
     'assets',
-    '{"add": [sha256, …], "remove": [sha256, …]}: assets declared or removed beyond those records attach. The older name, files, is also taken, but not both at once.',
+    '{"add": [sha256, …], "remove": [sha256, …]}: assets declared or removed beyond those records attach. A files field in its place is refused.',
   ],
   ['message', 'The change’s message.'],
   ['app_id, actor_id', 'Strings the server records with the version, outside the commit.'],
@@ -87,8 +87,7 @@ export default function ProtocolPushPull() {
         collection URL,{' '}
         <code>https://www.underlay.org/api/collections/&lt;owner&gt;/&lt;slug&gt;</code>. The{' '}
         <Link to="/docs/api/versions">Versions API</Link> and{' '}
-        <Link to="/docs/api/assets">Assets API</Link> give the full request and response shapes. The
-        older <code>…/files/…</code> paths and file-named fields still work.
+        <Link to="/docs/api/assets">Assets API</Link> give the full request and response shapes.
       </p>
       <CodeBlock>{endpoints}</CodeBlock>
 
@@ -174,8 +173,8 @@ export default function ProtocolPushPull() {
       </p>
       <p>
         Records attach assets with <code>{'{"$asset": "ul:asset:<hex>"}'}</code> (see{' '}
-        <Link to="/docs/protocol/records#asset-references">Asset references</Link>). Records written
-        with the older <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way.
+        <Link to="/docs/protocol/records#asset-references">Asset references</Link>). A record with a{' '}
+        <code>$file</code> is refused.
       </p>
 
       <h3 id="what-a-commit-holds">What a commit holds</h3>
@@ -253,11 +252,6 @@ export default function ProtocolPushPull() {
         that later holds it. The <Link to="/docs/cli">Underlay CLI</Link> pushes this way.
       </p>
       <CodeBlock>{uploadRoutes}</CodeBlock>
-      <p>
-        The sorted-record-file routes and the commit&rsquo;s <code>record_files</code> were first
-        named <code>…/uploads/&lt;id&gt;/files</code> and <code>files</code>; those names still
-        work.
-      </p>
       <ul>
         <li>
           <strong>Authority.</strong> Each collection has one authority, the only server that

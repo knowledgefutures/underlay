@@ -245,20 +245,11 @@ export default function DocsApiVersions() {
       <p>
         <strong>Version ids</strong> are <code>ul:ver:&lt;sha256&gt;</code>, the SHA-256 of the
         version&rsquo;s commit, and are the same for every reader. Anywhere a version id is
-        accepted, so are its bare hex and the same hash written <code>ulv3:</code> (as ids were
-        before November 18, 2026). Versions published before Underlay moved to protocol v3, on
-        November 13, 2026, also answer to the <code>ulv2:</code> ids they had then; responses always
-        give the <code>ul:ver:</code> id. Wherever a version is named in a path (<code>:n</code>),
-        it can be a semver (<code>v1.1.0</code>), a version id, or <code>latest</code>. Record,
-        schema, and asset hashes are bare hex in responses; to cite or link to a record write{' '}
-        <code>ul:rec:&lt;hash&gt;</code>, and to an asset <code>ul:asset:&lt;hash&gt;</code>.
-      </p>
-      <p>
-        Assets (PDFs, images) were first called files in the API. The older <code>…/files/…</code>{' '}
-        paths and file-named fields still work: request fields (<code>files</code> when opening a
-        push) are taken under either name, but not both at once, and responses carry both names with
-        the same value (<code>fileCount</code> beside <code>assetCount</code>,{' '}
-        <code>needed_files</code> beside <code>needed_assets</code>, and so on).
+        accepted, so is its bare hex; responses always give the <code>ul:ver:</code> id. Wherever a
+        version is named in a path (<code>:n</code>), it can be a semver (<code>v1.1.0</code>), a
+        version id, or <code>latest</code>. Record, schema, and asset hashes are bare hex in
+        responses; to cite or link to a record write <code>ul:rec:&lt;hash&gt;</code>, and to an
+        asset <code>ul:asset:&lt;hash&gt;</code>.
       </p>
       <p>
         A version never changes, so responses under <code>.../versions/:n</code> are cached when{' '}
@@ -334,8 +325,8 @@ export default function DocsApiVersions() {
               <td>
                 <code>{'{"add": [hash, …], "remove": [hash, …]}'}</code>: assets to declare or drop
                 beyond those your records attach. Each hash is bare 64-character lowercase hex. Any
-                other string, including one with a <code>ul:asset:</code> or <code>sha256:</code>{' '}
-                prefix, is ignored without an error.
+                other string, including a <code>ul:asset:</code> id, is ignored without an error. A{' '}
+                <code>files</code> field in its place is refused (<code>400</code>).
               </td>
             </tr>
             <tr>
@@ -433,9 +424,9 @@ export default function DocsApiVersions() {
           <code>400</code> if the bytes don&rsquo;t match the hash. Assets over{' '}
           <code>asset_bytes</code> are a <code>413</code>; upload those through{' '}
           <a href="/docs/api/assets">the Assets API</a>. Every asset a new record attaches with{' '}
-          <code>{'{"$asset": "ul:asset:<hex>"}'}</code> must be uploaded before the commit; so must
-          one attached with the older <code>{'{"$file": "sha256:<hex>"}'}</code>. A malformed{' '}
-          <code>$asset</code> is refused when the record is uploaded (<code>422</code>).
+          <code>{'{"$asset": "ul:asset:<hex>"}'}</code> must be uploaded before the commit. A
+          malformed <code>$asset</code>, or a <code>$file</code>, is refused when the record is
+          uploaded (<code>422</code>).
         </p>
 
         <h3>POST .../push/:sid/commit</h3>
@@ -507,8 +498,8 @@ export default function DocsApiVersions() {
           </li>
           <li>
             <code>422</code> <code>"Missing files"</code>: <code>assetsNeeded</code> lists up to 100
-            assets not uploaded, as bare hex (and so does <code>filesNeeded</code>, its older name).
-            The session stays open: upload them and commit the same session again.
+            assets not uploaded, as bare hex. The session stays open: upload them and commit the
+            same session again.
           </li>
           <li>
             <code>422</code> <code>"Schema validation failed"</code>, with{' '}
@@ -1166,8 +1157,7 @@ export default function DocsApiVersions() {
           The version&rsquo;s assets, sorted by hash, at most 10,000. Which records attach an asset
           isn&rsquo;t indexed, so <code>referenceCount</code> is always 0 and{' '}
           <code>references</code> always empty. <code>createdAt</code> is when the asset was first
-          uploaded, or <code>null</code>. The older path, <code>…/versions/:n/files</code>, answers
-          the same.
+          uploaded, or <code>null</code>.
         </p>
         <h3>
           Response <span className="text-ink-muted font-normal">200</span>

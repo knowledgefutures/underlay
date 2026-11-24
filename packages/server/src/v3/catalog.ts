@@ -1,7 +1,7 @@
 /**
  * A v3 collection's state as the server needs it, and its rows in D1.
  *
- * The log in the bucket is the truth (docs/protocol-v3.md); D1 is a catalog and cache of
+ * The log in the bucket is the truth (docs/protocol.md); D1 is a catalog and cache of
  * it: one `versions` row a commit, the head pointer, `schema_usage`, and the collection's
  * history totals. `recordCommit` writes them after a commit lands, and `syncCatalog`
  * writes any the bucket has and D1 lacks (a commit whose D1 write never happened).

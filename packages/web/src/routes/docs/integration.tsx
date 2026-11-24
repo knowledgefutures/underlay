@@ -151,8 +151,7 @@ export default function DocsIntegration() {
         <li>
           <strong>Version</strong>: The collection as of one commit in its log, and immutable: a
           JSON Schema per type, records, assets, and metadata. Identified by semver (e.g.{' '}
-          <code>v1.0.0</code>) or by its <code>ul:ver:</code> id. Versions converted from the
-          earlier format also answer to their old <code>ulv2:</code> ids.
+          <code>v1.0.0</code>) or by its <code>ul:ver:</code> id.
         </li>
         <li>
           <strong>Record</strong>: An <code>id</code>, a <code>type</code>, and a <code>data</code>{' '}
@@ -235,10 +234,6 @@ export default function DocsIntegration() {
           upload those assets and commit the same session again.
         </li>
       </ol>
-      <p>
-        The older <code>…/files/…</code> paths and file-named fields (<code>files</code>,{' '}
-        <code>needed_files</code>, <code>filesNeeded</code>, <code>fileCount</code>) still work.
-      </p>
       <pre className="bg-ink text-parchment rounded-surface overflow-x-auto p-3 text-xs">
         <code>{diffPush}</code>
       </pre>
@@ -303,8 +298,8 @@ export default function DocsIntegration() {
         <li>
           Assets are attached as <code>{assetRef}</code>. <code>mediaType</code> says what the bytes
           are and sets the type the collection serves them as; <code>fileName</code> is what
-          they&rsquo;re saved as. Give both. Any other member of that object is yours. Records
-          written with the older <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way
+          they&rsquo;re saved as. Give both. Any other member of that object is yours. A{' '}
+          <code>$file</code> is refused
         </li>
         <li>No joins. Prefer flat records; nesting is allowed up to 64 levels</li>
       </ul>

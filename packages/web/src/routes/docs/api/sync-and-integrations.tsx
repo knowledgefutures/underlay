@@ -193,7 +193,7 @@ const healthRes = `{
 }`
 
 const abuseReq = `{
-  "hash": "sha256:a1b2c3d4e5f6...",
+  "hash": "ul:asset:a1b2c3d4e5f6...",
   "reason": "This file republishes copyrighted material.",
   "contact": "rights@example.org"
 }`
@@ -287,8 +287,7 @@ export default function DocsApiSyncAndIntegrations() {
           whose bytes the platform doesn&rsquo;t hold, and <code>assets_withheld</code> assets that
           have been blocked; neither is in <code>files/</code>. Blocked records are left out of the
           NDJSON. <code>totalBytes</code> is the records&rsquo; canonical size plus the
-          assets&rsquo; size. The manifest also carries the older names, <code>fileCount</code>,{' '}
-          <code>files_missing</code>, and <code>files_withheld</code>, with the same values.
+          assets&rsquo; size.
         </p>
         <CodeBlock>{manifestRes}</CodeBlock>
         <p>
@@ -382,7 +381,6 @@ export default function DocsApiSyncAndIntegrations() {
       </p>
       <CodeBlock>{deliveryBody}</CodeBlock>
       <p>
-        The version also carries <code>fileCount</code>, the older name for <code>assetCount</code>.{' '}
         <code>X-Underlay-Delivery</code> is the same for every attempt of one delivery, so you can
         use it to ignore repeats. <code>X-Underlay-Signature</code> is <code>sha256=</code> followed
         by the hex HMAC-SHA256 of the raw request body, keyed with the webhook&rsquo;s secret. Check
@@ -600,10 +598,10 @@ export default function DocsApiSyncAndIntegrations() {
         <p>
           Report content that shouldn&rsquo;t be served. Body:{' '}
           <code>{'{"hash"?, "url"?, "reason", "contact"?}'}</code>. Name the content with an asset
-          or record <code>hash</code> (64 hex characters, <code>sha256:</code> prefix optional), a{' '}
-          <code>url</code>, or both. <code>reason</code> is required (up to 4,000 characters);{' '}
-          <code>contact</code> is how to reach you (up to 320). Returns <code>201</code>{' '}
-          <code>{'{"ok": true, "id"}'}</code>.
+          or record <code>hash</code> (64 hex characters, or a <code>ul:asset:</code> or{' '}
+          <code>ul:rec:</code> id), a <code>url</code>, or both. <code>reason</code> is required (up
+          to 4,000 characters); <code>contact</code> is how to reach you (up to 320). Returns{' '}
+          <code>201</code> <code>{'{"ok": true, "id"}'}</code>.
         </p>
         <CodeBlock>{abuseReq}</CodeBlock>
       </Endpoint>

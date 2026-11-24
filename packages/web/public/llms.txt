@@ -77,19 +77,16 @@ per data center and is approximate.
 - Version: an immutable state of a collection: schemas, records, assets, and metadata. Identified
   by semver ("v1.2.0"), by version id ("ul:ver:<64 hex>"), or as "latest". A collection is a log
   of commits, and a version is the log up to one commit; its id is "ul:ver:" + the SHA-256 of
-  that commit. Anywhere the API takes a version it also takes the bare 64 hex, the same hash
-  written "ulv3:<hex>" (how ids were written before 2026-11-18), and, for versions converted
-  from the earlier format on 2026-11-13, their old "ulv2:<hex>" ids. Responses give ul:ver:.
+  that commit. Anywhere the API takes a version it also takes the bare 64 hex. Responses give
+  ul:ver:.
 - Record: {id, type, data}. Its hash is the SHA-256 of its canonical form (see "Record Hashing");
   its id for citing and linking is "ul:rec:<hash>". Within a version, (type, id) identifies one
   record; the same id may appear under two types.
 - Type: a class of records with one JSON Schema (draft-07).
 - Asset: bytes a collection holds beside its records (a PDF, an image), identified by their
   SHA-256, "ul:asset:<hex>"; attached to a record with {"$asset": "ul:asset:<hex>"}, or
-  pointed at from anywhere with {"$link": "ul:asset:<hex>"}. Records written before 2026-11-22
-  attach with {"$file": "sha256:<hex>"}, which is still read the same way and is not checked.
-  The API first called assets files: the older .../files/... paths and file-named fields
-  (fileCount, needed_files, filesNeeded, and so on) still work, beside the asset names.
+  pointed at from anywhere with {"$link": "ul:asset:<hex>"}. A record with a $file is refused
+  (records written before November 2026 used $file; they were rewritten).
 - Underlay id: "ul:<kind>:<64 lowercase hex>" names a record (rec), an asset (asset), or a
   version (ver) by its hash. See "Links between records".
 - Schema labels: schemas can be labeled with URIs or names (e.g. "schema.org/Person") for
@@ -162,7 +159,7 @@ GET /api/collections/:owner/:slug/versions          → [version summary], newes
     (?limit= default 50, max 100; &offset=)
 GET /api/collections/:owner/:slug/versions/latest   → latest version (404 when there is none)
 GET /api/collections/:owner/:slug/versions/:n       → one version
-    (:n = v1.2.0, 1.2.0, ul:ver:<hex>, its bare hex, or an old ulv3:<hex> or ulv2:<hex> id)
+    (:n = v1.2.0, 1.2.0, ul:ver:<hex>, or its bare hex)
     → {semver, major, minor, patch, hash, baseSemver, message, appId, recordCount, assetCount,
        totalBytes, typeCounts, createdAt, ark, metadata, schemas: {type: schema}}
     hash is the version id (ul:ver:...). Members also get pushedBy, pushedByName, and actorId.
@@ -224,8 +221,7 @@ HEAD /api/collections/:owner/:slug/assets/:hash  → 200 with content-length and
 POST /api/collections/:owner/:slug/assets/presign → {"hashes": [...]} (up to 500)
                                                    → {hash: presignedUrl | null}
 
-:hash is 64 hex characters; a "ul:asset:" or "sha256:" prefix is accepted. Each of these routes
-also answers at its older path, with files in place of assets.
+:hash is 64 hex characters; a "ul:asset:" prefix is accepted.
 
 ### Export
 GET /api/collections/:owner/:slug/export   → an archive of the latest version
@@ -236,8 +232,7 @@ records/<Type>.ndjson (one per type that has records), files/<hash> (each asset'
 manifest.json = {collection: {id, owner, slug, name, description},
                  version: {semver, hash, message, recordCount, assetCount, totalBytes, createdAt},
                  schemas, assets_missing, assets_withheld}
-(it also carries fileCount, files_missing, and files_withheld, the older names, with the same
-values). The archive streams as it is produced: pipe it to disk or into tar. assets_missing
+The archive streams as it is produced: pipe it to disk or into tar. assets_missing
 lists assets with no stored copy; assets_withheld lists assets that may not be served. A failure partway
 through cuts the response off, so an archive that unpacks without error is complete. Entries
 are dated with the version's creation time, so the same version exports to byte-identical
@@ -321,7 +316,7 @@ Every field is optional:
   records attach. Bare 64-character lowercase hex; other strings are ignored. An asset belongs
   to the version whether or not a record attaches it, and stays in later versions until you
   remove it. Assets your records attach are added for you; they are not removed when no record
-  attaches them any more. The older name, "files", is taken too; sending both is 400.
+  attaches them any more. A "files" field (this one's first name) is refused (400).
 - message, app_id, actor_id: strings recorded with the version. actor_id is shown to members only.
 - strip_unknown_fields: true drops top-level data fields the type's schema doesn't list in
   "properties" before hashing. Default false: such records are refused (422).
@@ -341,7 +336,6 @@ Response (200):
     "asset_bytes": 33554432
   }
 }
-(The response also carries needed_files and limits.file_bytes, the older names.)
 
 - needed_assets: assets in assets.add that this collection doesn't hold yet (assets already
   uploaded and verified for it are held). Upload them before the commit.
@@ -387,7 +381,7 @@ Content-Type: application/x-ndjson
 PUT /api/collections/:owner/:slug/assets/:hash
 Content-Type: application/pdf   (what the bytes are; application/octet-stream if you don't know)
 Authorization: Bearer ul_<key>
-Body: the raw bytes (or multipart/form-data with an "asset" part; "file" also works)
+Body: the raw bytes (or multipart/form-data with an "asset" part)
 
 → 201 {"hash", "status": "stored", "size"}; 400 if the bytes don't hash to :hash; 413 over
 limits.asset_bytes.
@@ -471,8 +465,8 @@ Refused schema (422 at open): {"error": "<why>"} → fix the schema and open aga
 Schema change invalidates existing records (422 at commit): {"error": "Schema validation failed",
 "validationErrors": [...], "totalErrors": n}
 
-Missing assets (422 at commit): {"error": "Missing files", "assetsNeeded": ["abc..."],
-"filesNeeded": ["abc..."]} (the same list under both names; bare hex, at most 100 listed)
+Missing assets (422 at commit): {"error": "Missing files", "assetsNeeded": ["abc..."]}
+(bare hex, at most 100 listed)
 → The session stays open: upload the listed assets, then commit the same session again. After a
   background commit, polling shows status "open" with this body in "error".
 
@@ -822,8 +816,7 @@ A delivery is sent for each new version (pushes and metadata edits) whose bump i
 Each delivery is a POST with headers x-underlay-event, x-underlay-delivery, and
 x-underlay-signature: sha256=<HMAC-SHA256(secret, body)>, and the body
 {event: "version.created", collection: {owner, slug}, version: {semver, hash, major, minor,
-patch, recordCount, assetCount, fileCount}, bumpType}. version.hash is the ul:ver: id; fileCount
-is the older name for assetCount.
+patch, recordCount, assetCount}, bumpType}. version.hash is the ul:ver: id.
 
 Mirrors to your own bucket (owners and admins: session or admin key):
 GET|POST /api/orgs/:org/locations         → list, or add an S3-compatible bucket {"name", "endpoint",

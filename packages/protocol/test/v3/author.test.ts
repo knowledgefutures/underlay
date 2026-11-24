@@ -1,4 +1,4 @@
-/** Commits built by their author, replays, and receipts (Sections 4.6 and 4.7). */
+/** Commits built by their author, replays, and receipts (docs/protocol.md, Sections 8.1 and 8.2). */
 import { describe, expect, it } from 'vitest'
 
 import { createObject, ed25519Signer, memoryStore, type MemoryStore, v3 } from '../../src/index.js'

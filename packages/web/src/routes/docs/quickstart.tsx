@@ -294,9 +294,7 @@ export default function DocsQuickstart() {
         <code>{assetsCode}</code>
       </pre>
       <p>
-        The older <code>…/files/…</code> paths and file-named fields (<code>needed_files</code>,{' '}
-        <code>fileCount</code>) still work, and records written with{' '}
-        <code>{'{"$file": "sha256:<hex>"}'}</code> are read the same way.
+        A record with <code>$file</code> in place of <code>$asset</code> is refused.
       </p>
 
       <h2>Next steps</h2>

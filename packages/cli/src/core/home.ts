@@ -179,7 +179,7 @@ export class Home {
     mkdirSync(join(dir, 'schemas'), { recursive: true })
     const file = TomlFile.read(
       join(dir, 'collection.toml'),
-      `# ${keyOf(m)}: its authority numbers its versions (protocol-v3 4.6).\n`,
+      `# ${keyOf(m)}: its authority numbers its versions (docs/protocol.md, Section 8.1).\n`,
     )
     const t: Record<string, unknown> = {
       id: m.id,

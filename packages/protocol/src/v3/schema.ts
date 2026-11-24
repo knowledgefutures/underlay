@@ -1,6 +1,6 @@
 /**
- * Checking an upload before it is committed (docs/protocol-v3.md, Sections 4.3
- * to 4.5): its files came with it, are well formed, every record is canonical and satisfies
+ * Checking an upload before it is committed (docs/protocol.md, Sections 4,
+ * 7.3, and 7.4): its files came with it, are well formed, every record is canonical and satisfies
  * its type's schema, and the semver follows from the kinds of rows.
  *
  * The cost is one streaming pass over the uploaded files, plus a lookup for
@@ -233,7 +233,7 @@ export async function checkUpload(
     validated++
     const errors = v(data)
     if (errors.length > 0) fail(`${type} ${JSON.stringify(id)}: ${errors[0]}`)
-    // A malformed link is refused, as a server refuses it (Section 2.2).
+    // A malformed link is refused, as a server refuses it (Section 5.2).
     const linkProblem = checkLinks(data)
     if (linkProblem) fail(`${type} ${JSON.stringify(id)}: ${linkProblem}`)
   }
@@ -266,7 +266,7 @@ export async function checkUpload(
     } else {
       // Files taken as well formed (a trusted builder). One thing is still checked, since
       // version ids rest on it: a commit names only files as their author built them, with
-      // no commit numbers inside (Section 4). The footer says which, and it is read anyway.
+      // no commit numbers inside (Section 7.4). The footer says which, and it is read anyway.
       const file = await open(f.id)
       if (file.content.labeled) {
         fail(`File ${f.id} is labeled: a commit names only files with no commit numbers in them`)

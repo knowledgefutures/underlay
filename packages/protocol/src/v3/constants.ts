@@ -1,5 +1,5 @@
 /**
- * Protocol v3 constants (docs/protocol-v3.md, Section 10). Draft: they may still
+ * Protocol v3 constants (docs/protocol.md, Section 13). Draft: they may still
  * change, and a change to any of them changes file ids.
  */
 
@@ -12,7 +12,7 @@ export const MAX_FILE_ENTRIES = 1_048_576
 /** The first 8 bytes of a sorted-record-file's 16-byte trailer: `UL3SRF\n\0`. */
 export const TRAILER_MAGIC = new Uint8Array([0x55, 0x4c, 0x33, 0x53, 0x52, 0x46, 0x0a, 0x00])
 export const TRAILER_BYTES = 16
-/** Prefix of a version id: `ul:ver:<64 hex>` (Section 2.1). Commits hold the bare hex. */
+/** Prefix of a version id: `ul:ver:<64 hex>` (Section 5.1). Commits hold the bare hex. */
 export const VERSION_ID_PREFIX = 'ul:ver:'
 /** Decimal digits of a commit or layout number in its key. */
 export const NUMBER_WIDTH = 16

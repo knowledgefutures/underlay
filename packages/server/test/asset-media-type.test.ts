@@ -1,6 +1,6 @@
 /**
  * An asset's media type is what the collection's records say it is: `mediaType` on the
- * asset reference (protocol-v3.md 2.3) sets the collection's `$asset` row, over the type the
+ * asset reference (protocol.md 5.3) sets the collection's `$asset` row, over the type the
  * bytes were uploaded with. The bytes are shared; each collection's type is its own.
  */
 import { createHash } from 'node:crypto'

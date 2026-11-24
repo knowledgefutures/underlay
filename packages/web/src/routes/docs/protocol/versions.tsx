@@ -213,16 +213,14 @@ export default function ProtocolVersions() {
       <p>
         A version&rsquo;s id is <code>ul:ver:</code> followed by the SHA-256, in lowercase hex, of
         its commit&rsquo;s bytes. Inside a commit, <code>previous</code> and <code>base</code> hold
-        the bare hex alone: the member says what it is, so no way of writing an id is hashed. A
-        commit written before November 18, 2026 holds <code>ulv3:</code> and the hex there, which a
-        reader still accepts and a writer never writes. Version ids and signatures rest on commits,
-        and through them on the unlabeled files commits name, and on nothing else. None rests on a
-        labeled file or a layout file, so how those are written can change at the cost of a rebuild.
+        the bare hex alone: the member says what it is, so no way of writing an id is hashed.
+        Version ids and signatures rest on commits, and through them on the unlabeled files commits
+        name, and on nothing else. None rests on a labeled file or a layout file, so how those are
+        written can change at the cost of a rebuild.
       </p>
       <p>
         On underlay.org, the API takes a version as its semver, its <code>ul:ver:</code> id, the
-        id&rsquo;s bare hex, or <code>latest</code>, and the same hash written <code>ulv3:</code>. A
-        version converted from v2 also answers to its old <code>ulv2:</code> id.
+        id&rsquo;s bare hex, or <code>latest</code>.
       </p>
 
       <h2 id="base">Base</h2>

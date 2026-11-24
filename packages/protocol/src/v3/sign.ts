@@ -1,5 +1,5 @@
 /**
- * The two signatures of a commit (docs/protocol-v3.md, Section 4.2).
+ * The two signatures of a commit (docs/protocol.md, Section 7.2).
  *
  * The author signs what they sent: the collection, the files, the base, and the
  * message. The server signs where it landed: the whole commit, with its number
@@ -7,7 +7,7 @@
  * signature covers nothing the server adds, so a change that loses the race for a
  * number is committed at the next one with the author's signature untouched.
  *
- * Ed25519, as v2 Section 11.1, with v2's key ids and signers (`repo/log.ts`).
+ * Ed25519 (Section 7.2), with v2's key ids and signers (`repo/log.ts`).
  * Which keys a reader trusts is not the protocol's to say.
  */
 import { jcs } from '../jcs.js'

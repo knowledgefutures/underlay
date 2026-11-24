@@ -1,5 +1,5 @@
 /**
- * Links in record data (docs/protocol-v3.md, Section 2.2).
+ * Links in record data (docs/protocol.md, Section 5.2).
  *
  * A link is an object, at any depth of a record's `data`, with a `$link` member whose
  * value is a `ul:` id. It may say where its target was found, with `collection` (a
@@ -11,7 +11,7 @@
  * A server refuses a record with a malformed link (`checkLinks`). It never checks that a
  * target exists or can be read: a link is a claim made by the record that holds it.
  *
- * An asset reference, `{"$asset": "ul:asset:<hex>"}` (asset-refs.ts, Section 2.3), attaches
+ * An asset reference, `{"$asset": "ul:asset:<hex>"}` (asset-refs.ts, Section 5.3), attaches
  * the asset as well as pointing at it; `links` reads it, and the older
  * `{"$file": "sha256:<hex>"}`, as a link to `ul:asset:<hex>`. `checkLinks` refuses a malformed
  * `$asset` too. A `$file` is not checked: as in v2, one with any other value is no reference.

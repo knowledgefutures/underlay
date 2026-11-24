@@ -1,5 +1,5 @@
 /**
- * Commits, layout files, and the log (docs/protocol-v3.md, Sections 4, 5, 9).
+ * Commits, layout files, and the log (docs/protocol.md, Sections 7 and 9, and Appendix C).
  *
  * A commit is a small numbered object, created only if its number is free, that
  * names the sorted-record-files one upload added and the commit before it. A
@@ -150,7 +150,7 @@ export function sameVersion(a: string | null | undefined, b: string | null | und
 /** How a commit holds a version: bare hex. */
 const isCommitRef = (v: unknown): v is string => typeof v === 'string' && HEX.test(v)
 
-/** The members of a file entry as a commit is written with (Section 4). */
+/** The members of a file entry as a commit is written with (Section 7). */
 const FILE_REF_MEMBERS = 'bytes,entries,first,id,last,records,removals'
 
 function checkFileRef(f: unknown, what: string): asserts f is FileRef {

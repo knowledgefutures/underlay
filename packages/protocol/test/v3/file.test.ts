@@ -1,4 +1,4 @@
-/** The sorted-record-file: writer, reader, verifier (docs/protocol-v3.md, Section 3). */
+/** The sorted-record-file: writer, reader, verifier (docs/protocol.md, Section 6). */
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 

@@ -73,10 +73,8 @@ export default function DocsConcepts() {
         Each version also has an <strong>id</strong> (the <code>hash</code> field in API responses):{' '}
         <code>ul:ver:</code> followed by the SHA-256 of its commit. A commit names the commit before
         it, so the id fixes the version&rsquo;s content and its whole history. Wherever the API
-        takes a version it also takes the id&rsquo;s bare hex, and the same hash written{' '}
-        <code>ulv3:</code>, as ids were before November 18, 2026. Versions converted from
-        Underlay&rsquo;s earlier format kept their semvers, and their old <code>ulv2:</code> ids
-        still work too; responses show the <code>ul:ver:</code> id.
+        takes a version it also takes the id&rsquo;s bare hex; responses show the{' '}
+        <code>ul:ver:</code> id.
       </p>
 
       <h2>Record</h2>
@@ -136,8 +134,8 @@ export default function DocsConcepts() {
         holds: uploaded to it, or already in its current version. A commit refused for missing
         assets answers <code>422</code> with the hashes in <code>assetsNeeded</code>, and the push
         stays open: upload them and commit again. A <code>$asset</code> that isn&rsquo;t a{' '}
-        <code>ul:asset:</code> id is refused when you push. Records written before November 22, 2026
-        attach with <code>{'{"$file": "sha256:..."}'}</code>, which is still read the same way.
+        <code>ul:asset:</code> id is refused when you push, and so is a <code>$file</code>. Records
+        written before November 2026 used <code>$file</code>; they were rewritten.
       </p>
 
       <h2>Links</h2>

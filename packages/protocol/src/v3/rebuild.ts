@@ -1,5 +1,5 @@
 /**
- * Rebuilds and layout files (docs/protocol-v3.md, Sections 5 and 7).
+ * Rebuilds and layout files (docs/protocol.md, Sections 9 and 11).
  *
  * A rebuild merges sorted-record-files into fewer, larger, labeled ones and
  * creates the next layout. It changes where rows sit and nothing else: every
