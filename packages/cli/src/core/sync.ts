@@ -11,7 +11,7 @@
  * the version has the same id there, and signs a receipt. If someone pushed first, the
  * authority refuses with its newest version: pull, replay, renumber, and say so.
  */
-import { createObject, v3 } from '@underlay/protocol'
+import { createObject, jcs, v3 } from '@underlay/protocol'
 
 import { fetchAssets, sendAssets, unpushedAssets } from './assets.js'
 import type { Coll, Ctx } from './context.js'
@@ -71,8 +71,10 @@ export async function pull(
       `${c.key}: ${c.meta.authority} has ${page.head} versions, fewer than the ${known} pulled`,
     )
 
+  if (known > 0 && state.remote) await followRewrite(ctx, c, state.remote, now)
+
   // Each new commit is what its id says, and follows the one before.
-  let previous = state.remote?.id ?? null
+  let previous = c.store.state(cid).remote?.id ?? null
   const incoming: { stored: v3.StoredCommit; receipt: v3.Receipt | null }[] = []
   for (const [i, e] of page.commits.entries()) {
     const bytes = enc.encode(e.commit)
@@ -157,6 +159,88 @@ export async function pull(
   }
   ctx.home.writeCollection({ ...c.meta, pulled: now.toISOString() })
   return result
+}
+
+/**
+ * When the authority rewrote its history into the protocol's one spelling (docs/protocol/v3.md
+ * Appendix D: `ulv3:` ids and `$file` references, 2026-11), every commit from the first it
+ * changed has a new id, and the one last pulled here no longer follows. The authority still
+ * answers to the old id (a version's former id); when it names the same version, the pulled
+ * commits are replaced with the authority's, notes move to the new ids, and versions not yet
+ * pushed are built again on top. Anything else is a history that differs, and is refused.
+ */
+async function followRewrite(
+  ctx: Ctx,
+  c: Coll,
+  was: { number: number; id: string; semver: string },
+  now: Date,
+): Promise<void> {
+  const cid = cidOf(c)
+  const fs = c.store.fs
+  const remote = c.remote()
+  const theirs = await remote.commit(c.meta.org, c.meta.name, was.number)
+  if (v3.sameVersion(theirs.id, was.id)) return
+  const formerly = await remote.version(c.meta.org, c.meta.name, was.id)
+  if (formerly?.semver !== was.semver)
+    throw new CliError(
+      `${c.key}: ${c.meta.authority}'s version ${was.number} is not the one pulled here. To start again from theirs: underlay remove ${c.key}, then add it again`,
+    )
+
+  // Versions made here and not pushed: kept, to build again on top.
+  let unpushed: v3.StoredCommit[]
+  try {
+    unpushed = await unpushedOf(c)
+  } catch {
+    throw new CliError(
+      `${c.key}: ${c.meta.authority} rewrote its history, and the versions not pushed here were saved by an older CLI. Undo them (underlay undo), pull, and save them again`,
+    )
+  }
+
+  // The authority's commits, from the first, in place of the ones pulled.
+  const page = await remote.commitsAfter(c.meta.org, c.meta.name, 0)
+  const s = c.store.state(cid)
+  let previous: string | null = null
+  let last: v3.StoredCommit | null = null
+  for (const e of page.commits) {
+    if (e.number > was.number) break
+    const bytes = enc.encode(e.commit)
+    const stored = { commit: v3.parseCommit(bytes), id: v3.versionId(bytes), bytes }
+    if (!v3.sameVersion(stored.id, e.id) || stored.commit.number !== e.number)
+      throw new CliError(`${c.key}: commit ${e.number} is not what its id says`)
+    const follows =
+      previous === null
+        ? stored.commit.previous === null
+        : v3.sameVersion(stored.commit.previous, previous)
+    if (!follows) throw new CliError(`${c.key}: commit ${e.number} does not follow the one before`)
+    const key = v3.commitKey(cid, e.number)
+    const mine = await fs.get(key)
+    if (mine) {
+      const oldId = v3.versionId(await mine.bytes())
+      if (oldId !== stored.id && s.versions[oldId]) {
+        s.versions[stored.id] = s.versions[oldId]!
+        delete s.versions[oldId]
+      }
+    }
+    await fs.put(key, bytes)
+    if (e.receipt) await fs.put(v3.receiptKey(cid, e.number), jcs(e.receipt))
+    previous = stored.id
+    last = stored
+  }
+  if (!last || last.commit.number !== was.number)
+    throw new CliError(`${c.key}: ${c.meta.authority} did not send its first ${was.number} commits`)
+  s.remote = { number: last.commit.number, id: last.id, semver: last.commit.semver }
+  c.store.setState(cid, s)
+  if (unpushed.length > 0) {
+    for (const u of unpushed) {
+      await fs.delete(v3.commitKey(cid, u.commit.number))
+      await fs.delete(v3.receiptKey(cid, u.commit.number))
+    }
+    await replayOnto(c, unpushed, last, now)
+  }
+  await v3.writeCommitHint(fs, cid, was.number + unpushed.length)
+  ctx.say(
+    `${c.key}: ${c.meta.authority} rewrote its history (new version ids, \`$asset\` for \`$file\`); pulled it again`,
+  )
 }
 
 /** Fetch the record files of the newest version that the collection keeps; how many were fetched. */

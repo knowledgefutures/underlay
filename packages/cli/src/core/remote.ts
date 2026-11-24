@@ -247,6 +247,18 @@ export class Remote {
     return this.json<CommitEntry>(`${this.collectionPath(org, name)}/commits/${n}`)
   }
 
+  /** The version an id names, the id it had before a rewrite included; null if none. */
+  async version(org: string, name: string, id: string): Promise<{ semver: string } | null> {
+    try {
+      return await this.json<{ semver: string }>(
+        `${this.collectionPath(org, name)}/versions/${encodeURIComponent(id)}`,
+      )
+    } catch (err) {
+      if (err instanceof RemoteError && err.status === 404) return null
+      throw err
+    }
+  }
+
   async layout(org: string, name: string): Promise<v3.Layout | null> {
     return (
       await this.json<{ layout: v3.Layout | null }>(`${this.collectionPath(org, name)}/layout`)

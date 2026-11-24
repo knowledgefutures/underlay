@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /** Versions saved here, pushed unchanged, pulled on another machine, and replayed after a race. */
-import { v3 } from '@underlay/protocol'
+import { jcs, sha256Hex, type Store, v3 } from '@underlay/protocol'
 import { describe, expect, it } from 'vitest'
 
+import { rewriteV3 } from '../../server/src/v3/rewrite.js'
 import { assetsHere, listAssets, storeAssets, unpushedAssets } from '../src/core/assets.js'
 import {
   addCollection,
@@ -192,6 +193,58 @@ describe('versions here, push and pull', () => {
     const bv = await v3.openView(b.store.fs, meta.id)
     for await (const r of v3.exportAll(b.store.fs, bv, { type: 'Person' })) names.push(r.id)
     expect(names).toEqual(['ada', 'bob', 'cy'])
+  })
+
+  it('pulls again a history the authority rewrote, and keeps working on it', async () => {
+    const w = await world()
+    const meta = newCollection(w.ctx, 'test/org/redo')
+    w.home.writeSchemas(meta, { Person })
+    const a = openColl(w.ctx, meta)
+    await save(a, { Person }, people('Ada'))
+    await save(a, { Person }, people('Ada', 'Bob'))
+    await push(w.ctx, a)
+
+    // Both copies as a 2026-11 draft wrote them: `ulv3:` ids, here and on the authority.
+    const legacy = async (store: Store) => {
+      let prev: string | null = null
+      const was = new Map<string, string>()
+      for (let n = 1; n <= 2; n++) {
+        const read = (await v3.readCommit(store, meta.id, n))!
+        const c = read.commit
+        const old = {
+          ...c,
+          previous: prev === null ? null : `ulv3:${prev}`,
+          changes: c.changes.map((ch) => ({
+            ...ch,
+            base: ch.base === null ? null : `ulv3:${was.get(ch.base) ?? ch.base}`,
+          })),
+          keyId: null,
+          sig: null,
+        }
+        const signed = await v3.signObject(old as unknown as v3.Commit, w.h.signer)
+        const bytes = new TextEncoder().encode(jcs(signed))
+        await store.put(v3.commitKey(meta.id, n), bytes)
+        prev = sha256Hex(bytes)
+        was.set(v3.versionHex(read.id)!, prev)
+      }
+      return prev!
+    }
+    const oldHead = await legacy(w.h.ports.stores.v3)
+    expect(await legacy(a.store.fs)).toBe(oldHead)
+    const s = a.store.state(meta.id)
+    a.store.setState(meta.id, { ...s, remote: { ...s.remote!, id: `ulv3:${oldHead}` } })
+
+    expect(await rewriteV3(w.h.ports, meta.id)).toMatchObject({ rewritten: 1 })
+    const theirs = (await v3.findHead(w.h.ports.stores.v3, meta.id))!
+
+    // A version saved here meanwhile is built again on the rewritten history.
+    await pull(w.ctx, a)
+    expect(w.lines.some((l) => /rewrote its history/.test(l))).toBe(true)
+    expect((await logOf(a)).map((c) => c.id).at(-1)).toBe(theirs.id)
+    await v3.verifyLog(a.store.fs, meta.id)
+    const three = await save(a, { Person }, people('Ada', 'Bob', 'Cy'))
+    await push(w.ctx, a)
+    expect((await v3.findHead(w.h.ports.stores.v3, meta.id))!.id).toBe(three.version!.id)
   })
 
   it('undoes, rewords and squashes versions not yet pushed, never pushed ones', async () => {

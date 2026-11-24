@@ -45,11 +45,14 @@ export interface CollectionState {
   versions: Record<string, VersionNote>
 }
 
+const LEGACY_ID = /^ulv3:[0-9a-f]{64}$/
+
 /**
  * A state file as this CLI writes it: version ids as `ul:ver:<hex>`.
  */
 function currentIds(s: CollectionState): CollectionState {
-  const id = (k: string) => v3.toVersionId(k) ?? k
+  // `ulv3:<hex>`: how a CLI before 2026-11-18 wrote ids.
+  const id = (k: string) => v3.toVersionId(k) ?? (LEGACY_ID.test(k) ? `ul:ver:${k.slice(5)}` : k)
   return {
     ...s,
     remote: s.remote ? { ...s.remote, id: id(s.remote.id) } : null,

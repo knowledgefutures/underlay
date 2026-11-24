@@ -543,6 +543,11 @@ export async function checkAuthored(
   try {
     commit = v3.parseCommit(new TextEncoder().encode(text))
   } catch (err) {
+    // A CLI from before 2026-11-18 writes `previous` and `base` as `ulv3:<hex>`.
+    if (err instanceof v3.FormatError && text.includes('"ulv3:'))
+      return bad(
+        '"commit": version ids are bare hex in a commit, not ulv3: (an older CLI wrote them): update it with `underlay update`, then pull',
+      )
     if (err instanceof v3.FormatError) return bad(`"commit": ${err.message}`)
     throw err
   }
