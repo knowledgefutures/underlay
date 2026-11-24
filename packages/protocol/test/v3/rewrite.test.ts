@@ -269,6 +269,20 @@ describe('rewrite', () => {
     expect((await v3.rewriteCollection(plain, 'c', { signer })).files).toBe(0)
   })
 
+  it('checks records again only where renaming $file to $asset could change the verdict', () => {
+    const loose = { type: 'object', properties: { cover: { type: 'object' } }, required: ['cover'] }
+    expect(v3.renameMatters(loose)).toBe(false)
+    expect(v3.renameMatters({ ...loose, enum: [{ a: 1 }] })).toBe(false)
+    expect(v3.renameMatters({ properties: { c: { properties: { $file: {} } } } })).toBe(true)
+    expect(v3.renameMatters({ properties: { c: { additionalProperties: false } } })).toBe(true)
+    expect(
+      v3.renameMatters({ properties: { c: { additionalProperties: { type: 'string' } } } }),
+    ).toBe(true)
+    expect(v3.renameMatters({ properties: { c: { additionalProperties: true } } })).toBe(false)
+    expect(v3.renameMatters({ items: [{ patternProperties: { '^x': {} } }] })).toBe(true)
+    expect(v3.renameMatters({ properties: { c: { propertyNames: { maxLength: 9 } } } })).toBe(true)
+  })
+
   it('refuses a conversion its schema would reject, and writes nothing', async () => {
     const store = memoryStore()
     const signer = await ed25519Signer(seed)

@@ -211,6 +211,30 @@ export function convertSchemaRefs(schema: unknown): { schema: unknown; count: nu
   return { schema: schema2, count }
 }
 
+/**
+ * Whether renaming a member `$file` to `$asset`, keeping its value, could change what a
+ * schema says of a record that satisfied it. Only keywords that look at member names can
+ * tell the two apart: names in `properties`, `required`, or `dependencies` (the schema's text
+ * then holds `"$file"` or `"$asset"`), `patternProperties`, `propertyNames`, and an
+ * `additionalProperties` other than `true`. A `const` or `enum` could only match an object
+ * holding `$file` if its text held `"$file"`. When none is there the record is not checked
+ * again: validating is costly for some documents (one of 567 KB against a 24 KB schema took
+ * 211 s in Node), far past what a Durable Object may spend.
+ */
+export function renameMatters(schema: unknown): boolean {
+  const text = JSON.stringify(schema)
+  if (text.includes('"$file"') || text.includes('"$asset"')) return true
+  const walk = (v: unknown): boolean => {
+    if (v === null || typeof v !== 'object') return false
+    if (Array.isArray(v)) return v.some(walk)
+    const o = v as Record<string, unknown>
+    if (Object.hasOwn(o, 'patternProperties') || Object.hasOwn(o, 'propertyNames')) return true
+    if (Object.hasOwn(o, 'additionalProperties') && o.additionalProperties !== true) return true
+    return Object.values(o).some(walk)
+  }
+  return walk(schema)
+}
+
 /** A `$schema` line with its `$file` properties converted, or null when it has none. */
 function convertSchemaLine(line: string): string | null {
   if (!line.includes('"$file"')) return null
@@ -407,7 +431,8 @@ export async function rewriteCollection(
     : new Map<number, Row[]>()
 
   // Schemas as of each commit, to check every record whose data changes.
-  const schemas = new Map<string, SchemaValidator | null>()
+  // Each type's schema, compiled only if the rename could change its verdict (renameMatters).
+  const schemas = new Map<string, SchemaValidator | 'unaffected' | null>()
   let records = 0
   const schemaPairs: RewritePlan['schemas'] = []
   const writes: { key: string; bytes: Uint8Array }[] = []
@@ -435,7 +460,7 @@ export async function rewriteCollection(
       if (r.type === SCHEMA_TYPE && r.kind === 'r' && r.line) {
         const line = convertSchemaLine(r.line)
         const body = (JSON.parse(line ?? r.line) as { data: unknown }).data
-        schemas.set(r.id, compileSchema(body))
+        schemas.set(r.id, renameMatters(body) ? compileSchema(body) : 'unaffected')
         if (line !== null) {
           changed++
           schemaRows++
@@ -459,7 +484,7 @@ export async function rewriteCollection(
       changed++
       const v = schemas.get(r.type)
       if (!v) throw new RewriteError(`Commit ${c.number}: ${r.type} has no schema`)
-      const errors = v((JSON.parse(line) as { data: unknown }).data)
+      const errors = v === 'unaffected' ? [] : v((JSON.parse(line) as { data: unknown }).data)
       if (errors.length > 0) {
         throw new RewriteError(
           `Commit ${c.number}: ${r.type} ${JSON.stringify(r.id)} fails its schema once converted: ${errors[0]}`,
