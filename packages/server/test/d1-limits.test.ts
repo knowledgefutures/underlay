@@ -76,7 +76,7 @@ describe('D1 limits', () => {
     const presign = await h.request(`${base}/assets/presign`, {
       method: 'POST',
       user,
-      json: { hashes: [...bodies.map((b) => `sha256:${sha(b)}`), sha('not uploaded')] },
+      json: { hashes: [...bodies.map((b) => sha(b)), sha('not uploaded')] },
     })
     expect(presign.status).toBe(200)
     const urls = await json(presign)

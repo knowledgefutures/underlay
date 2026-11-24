@@ -30,7 +30,7 @@ describe('files', () => {
       body: bytes,
     })
     expect(res.status).toBe(400)
-    res = await h.request(`${base}/assets/sha256:${sha(bytes)}`, {
+    res = await h.request(`${base}/assets/ul:asset:${sha(bytes)}`, {
       method: 'PUT',
       user,
       body: bytes,

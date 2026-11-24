@@ -134,7 +134,7 @@ describe('denylist and abuse reports', () => {
       ).toBe(400)
       const report = await call('/api/abuse-reports', {
         method: 'POST',
-        json: { hash: `sha256:${sha(bad)}`, reason: 'spam file', contact: 'x@example.org' },
+        json: { hash: sha(bad), reason: 'spam file', contact: 'x@example.org' },
       })
       expect(report.status).toBe(201)
       const { id: reportId } = await report.json()

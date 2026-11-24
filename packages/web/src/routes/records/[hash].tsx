@@ -36,8 +36,8 @@ export default function RecordDetailPage() {
 
 function RecordDetail({ record }: { record: RecordData }) {
   const params = useParams()
-  // The path may name it as bare hex, sha256:<hex> or ul:rec:<hex>.
-  const hash = params.hash!.toLowerCase().replace(/^(sha256:|ul:rec:)/, '')
+  // The path may name it as bare hex or ul:rec:<hex>.
+  const hash = params.hash!.toLowerCase().replace(/^ul:rec:/, '')
 
   const fields = Object.entries(record.data)
 

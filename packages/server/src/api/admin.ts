@@ -388,7 +388,7 @@ export function adminRoutes() {
       return jsonError(c, 400, 'A reason is required; hash, url and contact are optional strings')
     }
     if (!hash && !url) return jsonError(c, 400, 'Name the content: a hash or a url')
-    const cleanHash = hash?.replace(/^(sha256:|ul:rec:|ul:asset:)/, '') ?? null
+    const cleanHash = hash?.replace(/^(ul:rec:|ul:asset:)/, '') ?? null
     if (cleanHash && !/^[0-9a-f]{64}$/.test(cleanHash)) {
       return jsonError(c, 400, 'hash must be 64 hex characters (a file or record hash)')
     }
@@ -456,7 +456,7 @@ export function adminRoutes() {
     const denied = await stewardOnly(c)
     if (denied) return denied
     const b = (await c.req.json().catch(() => null)) as Record<string, unknown> | null
-    const hash = str(b?.hash, 80)?.replace(/^(sha256:|ul:rec:|ul:asset:)/, '')
+    const hash = str(b?.hash, 80)?.replace(/^(ul:rec:|ul:asset:)/, '')
     const kind = (['file', 'record'] as const).find((k) => k === b?.kind)
     const reason = str(b?.reason, 4000)?.trim()
     if (!hash || !/^[0-9a-f]{64}$/.test(hash) || !kind || !reason) {
@@ -490,9 +490,7 @@ export function adminRoutes() {
     const { db } = c.var.ports
     const rows = await db
       .delete(schema.denylist)
-      .where(
-        eq(schema.denylist.hash, c.req.param('hash').replace(/^(sha256:|ul:rec:|ul:asset:)/, '')),
-      )
+      .where(eq(schema.denylist.hash, c.req.param('hash').replace(/^(ul:rec:|ul:asset:)/, '')))
       .returning({ hash: schema.denylist.hash })
     if (!rows.length) return jsonError(c, 404, 'Not on the denylist')
     forgetDenylist(db)
