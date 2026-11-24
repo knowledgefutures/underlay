@@ -287,6 +287,28 @@ describe('rewrite', () => {
     expect(v3.renameMatters({ properties: { c: { propertyNames: { maxLength: 9 } } } })).toBe(true)
   })
 
+  it('opens no file of records when deciding whether to read rows', async () => {
+    const store = memoryStore()
+    const signer = await ed25519Signer(seed)
+    await commitRows(store, [rec('$schema', 'T', SCHEMA), rec('T', 'a', { n: 1 })], signer)
+    const records = await commitRows(
+      store,
+      [rec('T', 'b', { n: 2 }), rec('T', 'c', { n: 3 })],
+      signer,
+    )
+    const recordsKey = v3.recordKey(records.commit.changes[0]!.files[0]!.id)
+    await legacyChain(store, signer, 2)
+    const get = store.get.bind(store)
+    const read: string[] = []
+    store.get = async (key, range) => {
+      read.push(key)
+      return get(key, range)
+    }
+    const plan = await v3.rewriteCollection(store, 'c', { signer })
+    expect(plan.commits.filter((c) => c.before !== c.after).map((c) => c.number)).toEqual([2])
+    expect(read).not.toContain(recordsKey)
+  })
+
   it('refuses a conversion its schema would reject, and writes nothing', async () => {
     const store = memoryStore()
     const signer = await ed25519Signer(seed)

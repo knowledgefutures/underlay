@@ -302,13 +302,18 @@ const filesOfRaw = (raw: Record<string, unknown>): FileRef[] =>
 /**
  * Whether a collection's rows must be read: some file holds a `$asset` row (only then can a
  * record hold a reference), or a `$schema` row that names `$file`. Reserved rows sort first
- * (`$asset` < `$meta` < `$schema` < any publisher type), so only each file's first key
- * blocks are read, however large it is.
+ * (`$asset` < `$meta` < `$schema` < any publisher type), so a file is opened only if its first
+ * key, as its layout or commit records it, is one of them; and then only its first key blocks
+ * are read, however large it is. A collection of thousands of files of records opens none.
  */
-async function mustScan(store: Store, ids: string[]): Promise<boolean> {
+async function mustScan(
+  store: Store,
+  files: { id: string; first: [string, string] | null }[],
+): Promise<boolean> {
   const pastSchemas = (k: [string, string] | null) =>
     k !== null && compareKeys(k[0], k[1], SCHEMA_TYPE, '\u{10FFFF}') > 0
-  for (const id of ids) {
+  for (const { id, first } of files) {
+    if (!first || pastSchemas(first)) continue
     const f = await openFile(store, id)
     if (!f.content.first || pastSchemas(f.content.first)) continue
     const reader = f.reader()
@@ -416,16 +421,19 @@ export async function rewriteCollection(
   // Rows, only if some record can hold a reference.
   const layout = await findLayout(store, collection)
   const through = layout?.through ?? 0
-  const sources: { id: string; commit: number | null }[] = [
-    ...(layout?.files ?? []).map((f) => ({ id: f.id, commit: f.labeled ? null : f.commits[0] })),
+  const sources: { id: string; commit: number | null; first: [string, string] | null }[] = [
+    ...(layout?.files ?? []).map((f) => ({
+      id: f.id,
+      commit: f.labeled ? null : f.commits[0],
+      first: f.first,
+    })),
     ...old
       .filter((c) => c.number > through)
-      .flatMap((c) => filesOfRaw(c.raw).map((f) => ({ id: f.id, commit: c.number }))),
+      .flatMap((c) =>
+        filesOfRaw(c.raw).map((f) => ({ id: f.id, commit: c.number, first: f.first })),
+      ),
   ]
-  const scan = await mustScan(
-    store,
-    sources.map((s) => s.id),
-  )
+  const scan = await mustScan(store, sources)
   const rows = scan
     ? await rowsByCommit(store, sources, opts.maxScanBytes ?? 4 * 1024 * 1024 * 1024)
     : new Map<number, Row[]>()
