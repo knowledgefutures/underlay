@@ -245,6 +245,30 @@ describe('rewrite', () => {
     await v3.verifyLog(store, 'c', { serverKeys: [signer.publicKey], files: true })
   })
 
+  it('converts a schema that names $file in a collection with no assets', async () => {
+    const store = memoryStore()
+    const signer = await ed25519Signer(seed)
+    const avatar = {
+      type: 'object',
+      properties: { $file: { type: 'string' } },
+      required: ['$file'],
+    }
+    const schema = { type: 'object', properties: { avatar } }
+    await commitRows(store, [rec('$schema', 'T', schema), rec('T', 'a', { n: 1 })], signer)
+    await commitRows(store, [rec('T', 'b', { n: 2 })], signer)
+    const plan = await v3.rewriteCollection(store, 'c', { signer })
+    expect(plan.records).toBe(0)
+    expect(plan.schemas).toHaveLength(1)
+    const view = await v3.openView(store, 'c')
+    const row = await v3.getRecord(store, view, '$schema', 'T')
+    expect(dec.decode(row!.line!)).toContain('"required":["$asset"]')
+    await v3.verifyLog(store, 'c', { serverKeys: [signer.publicKey], files: true })
+    // A collection with neither assets nor such a schema is not read at all.
+    const plain = memoryStore()
+    await commitRows(plain, [rec('$schema', 'T', SCHEMA), rec('T', 'a', { n: 1 })], signer)
+    expect((await v3.rewriteCollection(plain, 'c', { signer })).files).toBe(0)
+  })
+
   it('refuses a conversion its schema would reject, and writes nothing', async () => {
     const store = memoryStore()
     const signer = await ed25519Signer(seed)

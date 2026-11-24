@@ -275,17 +275,28 @@ async function readRaw(store: Store, collection: string, n: number): Promise<Old
 const filesOfRaw = (raw: Record<string, unknown>): FileRef[] =>
   (raw.changes as { files: FileRef[] }[]).flatMap((c) => c.files)
 
-/** Whether any `$asset` row exists in a file list: only then can records hold references. */
-async function holdsAssets(store: Store, ids: string[]): Promise<boolean> {
+/**
+ * Whether a collection's rows must be read: some file holds a `$asset` row (only then can a
+ * record hold a reference), or a `$schema` row that names `$file`. Reserved rows sort first
+ * (`$asset` < `$meta` < `$schema` < any publisher type), so only each file's first key
+ * blocks are read, however large it is.
+ */
+async function mustScan(store: Store, ids: string[]): Promise<boolean> {
+  const pastSchemas = (k: [string, string] | null) =>
+    k !== null && compareKeys(k[0], k[1], SCHEMA_TYPE, '\u{10FFFF}') > 0
   for (const id of ids) {
     const f = await openFile(store, id)
-    const first = f.content.first
-    const last = f.content.last
-    if (!first || !last) continue
-    // Reserved rows sort first: `$asset` < `$meta` < `$schema` < any publisher type.
-    if (compareKeys(first[0], first[1], '$asset', '\u{10FFFF}') > 0) continue
-    if (compareKeys(last[0], last[1], '$asset', '') < 0) continue
-    return true
+    if (!f.content.first || pastSchemas(f.content.first)) continue
+    const reader = f.reader()
+    const blocks = f.content.keyBlocks
+    for (let b = 0; b < blocks.length; b++) {
+      if (pastSchemas([blocks[b]![0], blocks[b]![1]])) break
+      for (const e of await reader.keyBlock(b)) {
+        if (e.type === '$asset') return true
+        if (e.type !== SCHEMA_TYPE) continue
+        if (e.kind === 'r' && dec.decode(await reader.line(e)).includes('"$file"')) return true
+      }
+    }
   }
   return false
 }
@@ -387,7 +398,7 @@ export async function rewriteCollection(
       .filter((c) => c.number > through)
       .flatMap((c) => filesOfRaw(c.raw).map((f) => ({ id: f.id, commit: c.number }))),
   ]
-  const scan = await holdsAssets(
+  const scan = await mustScan(
     store,
     sources.map((s) => s.id),
   )
