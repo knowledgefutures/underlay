@@ -70,11 +70,14 @@ export async function rewriteV3(
   }
   if (opts.dryRun) return outcome
 
-  // D1 follows the log. Keyed by number, so a row still spelled `ulv3:` is found too.
-  for (const c of changed) {
+  // D1 follows the log, every row by number: a row still spelled `ulv3:` takes `ul:ver:`.
+  for (const c of plan.commits) {
     await ports.db
       .update(schema.versions)
-      .set({ hash: `ul:ver:${c.after}`, formerHash: `ul:ver:${c.before}` })
+      .set({
+        hash: `ul:ver:${c.after}`,
+        ...(c.before !== c.after ? { formerHash: `ul:ver:${c.before}` } : {}),
+      })
       .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.seq, c.number)))
   }
   // A schema written for `$file` has a new hash: the collection uses it now, and its labels

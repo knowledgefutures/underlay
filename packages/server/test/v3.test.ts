@@ -937,7 +937,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     // A D1 row that names another commit, and a file cut short.
     await h.ports.db
       .update(schema.versions)
-      .set({ hash: 'ulv3:' + '0'.repeat(64) })
+      .set({ hash: 'ul:ver:' + '0'.repeat(64) })
       .where(and(eq(schema.versions.collectionId, c.id), eq(schema.versions.seq, 1)))
     const [f] = (await v3.currentFiles(h.ports.stores.v3, c.id)).files
     const key = v3.recordKey(f!.id)

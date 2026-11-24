@@ -77,7 +77,7 @@ export async function pull(
   for (const [i, e] of page.commits.entries()) {
     const bytes = enc.encode(e.commit)
     const stored = { commit: v3.parseCommit(bytes), id: v3.versionId(bytes), bytes }
-    // Ids compare by hash: a server or a state file from before 2026-11-18 writes ulv3:.
+    // Ids compare by hash.
     if (!v3.sameVersion(stored.id, e.id))
       throw new CliError(`${c.key}: commit ${e.number} is not what its id says`)
     const follows =
@@ -297,21 +297,6 @@ export async function push(
     }
     ctx.home.writeCollection({ ...c.meta, isNew: false })
     c.meta.isNew = false
-  }
-  // Versions saved by a CLI from before 2026-11-18 name the ones before them by ulv3: ids,
-  // which an authority refuses: build them again first, the same changes on the same base.
-  const pending = await unpushedOf(c)
-  if (pending.some((s) => v3.hasLegacyIds(s.commit))) {
-    const first = pending[0]!.commit.number
-    const onto = first > 1 ? await v3.readCommit(c.store.fs, cid, first - 1) : null
-    for (const s of pending) {
-      await c.store.fs.delete(v3.commitKey(cid, s.commit.number))
-      await c.store.fs.delete(v3.receiptKey(cid, s.commit.number))
-    }
-    await replayOnto(c, pending, onto, new Date())
-    say(
-      `  rebuilt ${pending.length} version${pending.length === 1 ? '' : 's'} saved by an older CLI`,
-    )
   }
   // Assets first: the authority takes a `$asset` row only for bytes already sent to it.
   const sentAssets = await sendAssets(c, onFile)

@@ -78,11 +78,7 @@
     {
       "input": "ulv3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "id": null,
-      "typed": {
-        "hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        "kind": "ver",
-        "form": "ulv3"
-      }
+      "typed": null
     },
     {
       "input": "ulv2:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
@@ -96,11 +92,7 @@
     {
       "input": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "id": null,
-      "typed": {
-        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "kind": null,
-        "form": "sha256"
-      }
+      "typed": null
     },
     {
       "input": " ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ",

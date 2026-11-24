@@ -46,8 +46,7 @@ export interface CollectionState {
 }
 
 /**
- * A state file as this CLI writes it: version ids as `ul:ver:<hex>`. One written before
- * 2026-11-18 keys its notes by `ulv3:<hex>`, the same versions.
+ * A state file as this CLI writes it: version ids as `ul:ver:<hex>`.
  */
 function currentIds(s: CollectionState): CollectionState {
   const id = (k: string) => v3.toVersionId(k) ?? k

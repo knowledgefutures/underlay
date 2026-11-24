@@ -15,6 +15,7 @@ import {
   assetMediaTypes,
   assetRefs,
   emptySet,
+  fileRefs,
   InputRuleError,
   mayHoldAssetRefs,
   OUT_OF_LINE_BYTES,
@@ -209,7 +210,16 @@ export async function prepareRecords(
     const isPrivate = isPrivateSchema(typeSchema) || rec.private === true
     // A packed record's body leaves its entry (push/packs.ts): the commit counts its
     // asset references from these: `$asset`, or `$file` as records wrote it before.
-    const refs = opts.packed && mayHoldAssetRefs(canonical) ? assetRefs(data) : []
+    // v2 attaches with `$file` (fileRefs); v3 with `$asset`.
+    const refs = !opts.packed
+      ? []
+      : opts.legacyFiles
+        ? canonical.includes('"$file"')
+          ? fileRefs(data)
+          : []
+        : mayHoldAssetRefs(canonical)
+          ? assetRefs(data)
+          : []
     const types = refs.length ? assetMediaTypes(data) : {}
     const entry: RunEntry = {
       t: rec.type,

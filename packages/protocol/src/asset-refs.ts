@@ -1,5 +1,5 @@
 /**
- * Asset references in record data (docs/protocol-v3.md, Section 2.3).
+ * Asset references in record data (docs/protocol.md, Section 5.3).
  *
  * A record attaches an asset with an object, at any depth of its `data`, whose `$asset`
  * member is the asset's Underlay id. Two other members have a meaning: `mediaType`, what the
@@ -8,14 +8,11 @@
  *
  *   {"$asset": "ul:asset:<hex>", "mediaType": "image/png", "fileName": "cover.png"}
  *
- * Records written before 2026-11-22 attach with `{"$file": "sha256:<hex>"}`, read the same
- * way. As in v2, a `$file` with any other value is not a reference and is searched like any
- * other object; a malformed `$asset` is refused at push (`checkLinks`, links.ts).
+ * A malformed `$asset` is refused at push (`checkLinks`, links.ts), and so is a `$file`, how
+ * drafts attached assets before (v2's own `$file` is read by `fileRefs`, file-refs.ts).
  */
 
 export const ASSET_MEMBER = '$asset'
-/** The member records used before `$asset`. */
-export const LEGACY_FILE_MEMBER = '$file'
 /** What an attached asset's bytes are: an IANA media type, `type/subtype`. */
 export const MEDIA_TYPE_MEMBER = 'mediaType'
 /** What to call an attached asset when it's saved: a file name, no directories. */
@@ -46,7 +43,6 @@ export function fileNameOf(v: unknown): string | null {
 }
 
 const ASSET_ID = /^ul:asset:([0-9a-f]{64})$/
-const FILE_REF = /^sha256:([0-9a-f]{64})$/
 
 /**
  * What an object is as an asset reference: the hash it attaches (`hash`), a `$asset` whose
@@ -58,13 +54,11 @@ export function assetRefIn(o: Record<string, unknown>): { hash: string } | { bad
     const m = typeof v === 'string' ? ASSET_ID.exec(v) : null
     return m ? { hash: m[1]! } : { bad: v }
   }
-  const f = typeof o[LEGACY_FILE_MEMBER] === 'string' ? FILE_REF.exec(o.$file as string) : null
-  return f ? { hash: f[1]! } : null
+  return null
 }
 
 /** Whether a record's text may hold an asset reference: a cheap test before parsing it. */
-export const mayHoldAssetRefs = (text: string) =>
-  text.includes('"$asset"') || text.includes('"$file"')
+export const mayHoldAssetRefs = (text: string) => text.includes('"$asset"')
 
 /**
  * The assets a record's data attaches, as bare hex, deduplicated, in first-seen order. A

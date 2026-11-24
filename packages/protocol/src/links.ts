@@ -132,8 +132,8 @@ export function checkLinks(
 }
 
 /**
- * Every link in a record's data, in document order, with asset references (`$asset`, and
- * `$file` before it) read as asset links. A malformed `$link` or `$asset` is skipped (a
+ * Every link in a record's data, in document order, with asset references (`$asset`) read
+ * as asset links. A malformed `$link` or `$asset` is skipped (a
  * server has refused it before it is stored).
  */
 export function links(data: unknown): Link[] {

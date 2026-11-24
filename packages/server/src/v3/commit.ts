@@ -124,8 +124,7 @@ async function prepareSession(
   await ensureCollection(store, cid)
   const view = await headView(store, cid)
   const headCounts = (await lastRow(ports, cid))?.typeCounts ?? {}
-  // The head the change is built against: the log's, which must be the D1 row's. The row
-  // may still spell it ulv3: until the backfill moves it (version-ids.ts).
+  // The head the change is built against: the log's, which must be the D1 row's.
   const expectHead = view ? (await v3.findHead(store, cid))!.id : null
   if (expectHead === null ? base !== null : !v3.sameVersion(expectHead, base?.hash)) {
     return { status: 'base_moved', current: base?.semver ?? null }

@@ -132,14 +132,12 @@ describe('author-built commits', () => {
       v3.checkAuthorCommit(one.bytes, 'c1', { ...ok, now: new Date('2026-11-16T13:00:00Z') }),
     ).toHaveProperty('problem')
     expect(v3.checkAuthorCommit(one.bytes, 'c1', { ...ok, files: [] })).toHaveProperty('problem')
-    // A commit built by a client from before 2026-11-18, with a ulv3: base, is refused.
+    // A commit with a ulv3: base, as clients built before 2026-11-18, is not a commit.
     const oldStyle = v3.commitBytes({
       ...one.commit,
       changes: [{ ...ch, base: `ulv3:${'0'.repeat(64)}` }],
     })
-    expect(v3.checkAuthorCommit(oldStyle, 'c1', ok)).toEqual({
-      problem: expect.stringMatching(/bare hex/),
-    })
+    expect(v3.checkAuthorCommit(oldStyle, 'c1', ok)).toHaveProperty('problem')
     // A number past the newest is never right.
     const two = await v3.buildCommit({
       collection: 'c1',
@@ -242,7 +240,7 @@ describe('receipts', () => {
 
 describe('a commit’s time', () => {
   const head = (createdAt: string) => ({
-    id: `ulv3:${'0'.repeat(64)}`,
+    id: `ul:ver:${'0'.repeat(64)}`,
     commit: { number: 1, semver: 'v1.0.0', createdAt },
   })
 

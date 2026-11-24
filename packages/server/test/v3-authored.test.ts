@@ -355,7 +355,7 @@ describe.skipIf(!onV3)('v3: what the phase 0 review found', () => {
     const { h, user, c, base } = await setup()
     const first = await push(h, user, base, c.id, null, firstRows(), 'major')
     const stray = await push(h, user, base, c.id, first.built, one('a2'), 'minor', {
-      base: `ulv3:${'ab'.repeat(32)}`,
+      base: `ul:ver:${'ab'.repeat(32)}`,
     })
     expect(stray.status).toMatchObject({ status: 'failed', error: { statusCode: 422 } })
     expect(JSON.stringify(stray.status.error)).toContain('is not a version of')

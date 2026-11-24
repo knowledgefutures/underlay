@@ -25,7 +25,6 @@ import {
   commitBytes,
   commitFiles,
   commitKey,
-  hasLegacyIds,
   nextSemver,
   notBefore,
   parseCommit,
@@ -167,11 +166,6 @@ export function checkAuthorCommit(
     throw err
   }
   if (commit.collection !== collection) return { problem: `The commit is for ${commit.collection}` }
-  if (hasLegacyIds(commit))
-    return {
-      problem:
-        'previous and base are bare hex, not ulv3: ids: update the client that built this commit',
-    }
   const wantNumber = (check.head?.commit.number ?? 0) + 1
   const follows =
     check.head === null ? commit.previous === null : sameVersion(commit.previous, check.head.id)
@@ -262,9 +256,8 @@ export function parseReceipt(text: string): Receipt {
     o.underlay !== 3 ||
     typeof o.collection !== 'string' ||
     !Number.isSafeInteger(o.number) ||
-    // Bare hex; `ulv3:` and hex in receipts written before 2026-11-18.
-    versionHex(o.version as string) === null ||
-    String(o.version).startsWith('ul:') ||
+    typeof o.version !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(o.version) ||
     typeof o.receivedAt !== 'string' ||
     typeof o.server !== 'string' ||
     !(o.keyId === null || typeof o.keyId === 'string') ||

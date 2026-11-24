@@ -35,6 +35,10 @@ async function commitRows(
   )
 }
 
+/** A commit's id from its stored bytes, which a reader may no longer parse. */
+const rawId = async (store: MemoryStore, n: number) =>
+  `ul:ver:${sha256Hex(await (await store.get(v3.commitKey('c', n)))!.bytes())}`
+
 /** Put commit `n` back as a draft wrote it: `ulv3:` ids, signed again, chained to the one before. */
 async function legacyChain(store: MemoryStore, signer: v3.Signer, upTo: number) {
   let prev: string | null = null
@@ -85,12 +89,12 @@ describe('rewrite', () => {
     await commitRows(store, [rec('T', 'b', { n: 2 })], signer, v3.versionHex(c1.id))
     await commitRows(store, [rec('T', 'c', { n: 3 })], signer)
     await legacyChain(store, signer, 3)
-    const before = [1, 2, 3].map(async (n) => (await v3.readCommit(store, 'c', n))!.id)
+    const before = [1, 2, 3].map((n) => rawId(store, n))
     const beforeIds = await Promise.all(before)
 
     const dry = await v3.rewriteCollection(store, 'c', { signer, dryRun: true })
     expect(dry.commits.filter((c) => c.before !== c.after).map((c) => c.number)).toEqual([2, 3])
-    expect((await v3.readCommit(store, 'c', 2))!.id).toBe(beforeIds[1])
+    expect(await rawId(store, 2)).toBe(beforeIds[1])
 
     const plan = await v3.rewriteCollection(store, 'c', { signer })
     expect(plan.records).toBe(0)

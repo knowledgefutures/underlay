@@ -37,26 +37,26 @@ describe('ul: ids', () => {
     expect(() => ulId('rec', 'abc')).toThrow()
   })
 
-  it('reads what a person pastes: bare hex, old prefixes, spaces and capitals', () => {
+  it('reads what a person pastes: bare hex, spaces and capitals, and no retired prefix', () => {
     expect(parseHashInput(` ${a.toUpperCase()} `)).toEqual({ hash: a, kind: null, form: 'hex' })
-    expect(parseHashInput(`ulv3:${a}`)).toEqual({ hash: a, kind: 'ver', form: 'ulv3' })
     expect(parseHashInput(`ulv2:${a}`)).toEqual({ hash: a, kind: 'ver', form: 'ulv2' })
-    expect(parseHashInput(`sha256:${a}`)).toEqual({ hash: a, kind: null, form: 'sha256' })
+    expect(parseHashInput(`ulv3:${a}`)).toBeNull()
+    expect(parseHashInput(`sha256:${a}`)).toBeNull()
     expect(parseHashInput(`UL:REC:${a}`)).toEqual({ hash: a, kind: 'rec', form: 'ul' })
     expect(parseHashInput('v1.2.0')).toBeNull()
     expect(parseHashInput('latest')).toBeNull()
   })
 
-  it('gives version ids as ul:ver: and reads every form of one', () => {
+  it('gives version ids as ul:ver:, and reads that and bare hex only', () => {
     const id = v3.versionId(new TextEncoder().encode('{}'))
     expect(id).toMatch(/^ul:ver:[0-9a-f]{64}$/)
     const hex = id.slice('ul:ver:'.length)
     expect(v3.versionHex(id)).toBe(hex)
-    expect(v3.versionHex(`ulv3:${hex}`)).toBe(hex)
+    expect(v3.versionHex(`ulv3:${hex}`)).toBeNull()
     expect(v3.versionHex(hex)).toBe(hex)
     expect(v3.versionHex(`ulv2:${hex}`)).toBeNull()
-    expect(v3.toVersionId(`ulv3:${hex}`)).toBe(id)
-    expect(v3.sameVersion(`ulv3:${hex}`, id)).toBe(true)
+    expect(v3.toVersionId(`ulv3:${hex}`)).toBeNull()
+    expect(v3.sameVersion(hex, id)).toBe(true)
     expect(v3.sameVersion(null, null)).toBe(false)
   })
 })

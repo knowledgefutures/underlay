@@ -30,7 +30,8 @@ export type VersionRow = typeof schema.versions.$inferSelect
 
 /**
  * Find a version by semver ("v1.2.3", "1.2"), "latest", or id: `ul:ver:<hex>`, bare hex,
- * or the `ulv3:` and `ulv2:` aliases (record-references.md, decision 7).
+ * or a `ulv2:` id (v2's own, and a converted version's alias), and an id a version had
+ * before the rewrite into the protocol's one spelling (v3/rewrite.ts).
  */
 export async function findVersion(
   db: Db,
@@ -56,7 +57,7 @@ export async function findVersion(
     where = and(
       eq(schema.versions.collectionId, collectionId),
       or(
-        inArray(schema.versions.hash, [`ul:ver:${h}`, `ulv3:${h}`, `ulv2:${h}`]),
+        inArray(schema.versions.hash, [`ul:ver:${h}`, `ulv2:${h}`]),
         // Its id before the rewrite into the protocol's one spelling (v3/rewrite.ts).
         eq(schema.versions.formerHash, `ul:ver:${h}`),
         ...(id.form === 'hex' ? [eq(schema.versions.v2Hash, `ulv2:${h}`)] : []),

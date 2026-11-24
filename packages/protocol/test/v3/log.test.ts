@@ -29,50 +29,21 @@ async function fileOf(store: MemoryStore, id: string, n = 3): Promise<v3.FileRef
 const at = (iso: string) => ({ now: () => new Date(iso) })
 
 describe('commits', () => {
-  it('reads commits written with ulv3: ids, and follows them with bare hex', async () => {
+  it('refuses a commit that holds a ulv3: id, which only the rewrite reads', async () => {
     const store = memoryStore()
     const first = await v3.createCommit(store, 'old', { files: [], bump: 'minor' })
-    // As commit 2 was written before 2026-11-18: previous and base as ulv3: ids.
-    const legacy: v3.Commit = {
-      underlay: 3,
-      collection: 'old',
+    const legacy = {
+      ...first.commit,
       number: 2,
       previous: `ulv3:${hex(first.id)}`,
       semver: 'v1.0.1',
-      createdAt: new Date(Date.parse(first.commit.createdAt) + 1000).toISOString(),
-      changes: [
-        {
-          collection: 'old',
-          files: [],
-          base: `ulv3:${hex(first.id)}`,
-          message: null,
-          keyId: null,
-          sig: null,
-        },
-      ],
-      keyId: null,
-      sig: null,
     }
-    await createObject(store, v3.commitKey('old', 2), v3.commitBytes(legacy))
-    const two = (await v3.readCommit(store, 'old', 2))!
-    expect(v3.hasLegacyIds(two.commit)).toBe(true)
-    const three = await v3.createCommit(store, 'old', {
-      files: [],
-      base: `ulv3:${hex(two.id)}`,
-      bump: 'minor',
-    })
-    expect(three.commit.previous).toBe(hex(two.id))
-    expect(three.commit.changes[0]!.base).toBe(hex(two.id))
-    expect(v3.hasLegacyIds(three.commit)).toBe(false)
-    expect((await v3.verifyLog(store, 'old'))!.id).toBe(three.id)
-    expect(await v3.findVersion(store, 'old', first.id, 3)).toBe(1)
-    // A change built elsewhere with an old base is refused, not committed as it came.
+    await createObject(store, v3.commitKey('old', 2), new TextEncoder().encode(jcs(legacy)))
+    await expect(v3.readCommit(store, 'old', 2)).rejects.toThrow(v3.FormatError)
+    expect(v3.versionHex(`ulv3:${hex(first.id)}`)).toBeNull()
     await expect(
-      v3.createCommit(store, 'old', {
-        change: { ...three.commit.changes[0]!, base: `ulv3:${hex(two.id)}` },
-        bump: 'minor',
-      }),
-    ).rejects.toThrow(/bare hex/)
+      v3.createCommit(store, 'old', { files: [], base: `ulv3:${hex(first.id)}`, bump: 'minor' }),
+    ).rejects.toThrow()
   })
 
   it('chains commits by version id and numbers them from 1', async () => {

@@ -12,7 +12,7 @@ import { createObject, type Store } from '../repo/types.js'
 import { type BumpType, parseSemver } from '../semver.js'
 import { sha256Hex } from '../sha256.js'
 import { utf8 } from '../utf8.js'
-import { LEGACY_VERSION_ID_PREFIX, NUMBER_WIDTH, VERSION_ID_PREFIX } from './constants.js'
+import { NUMBER_WIDTH, VERSION_ID_PREFIX } from './constants.js'
 import type { FileRef, KeyPair } from './file.js'
 import { compareKeys, FormatError } from './lines.js'
 import { type PublicKeyInfo, type Signer, signObject, verifyObject } from './sign.js'
@@ -28,7 +28,7 @@ export interface Change {
   files: FileRef[]
   /**
    * The version the author was working from, as bare hex, or null. Recorded, never
-   * enforced. (`ulv3:` and the hex in changes committed before 2026-11-18.)
+   * enforced.
    */
   base: string | null
   message: string | null
@@ -42,8 +42,7 @@ export interface Commit {
   collection: string
   number: number
   /**
-   * The commit before, as the bare hex of its version id; null for the first. (`ulv3:` and
-   * the hex in commits written before 2026-11-18.)
+   * The commit before, as the bare hex of its version id; null for the first.
    */
   previous: string | null
   semver: string
@@ -121,20 +120,18 @@ const isKeyPair = (v: unknown): v is KeyPair =>
 const nullOrString = (v: unknown) => v === null || typeof v === 'string'
 const VERSION_ID = /^ul:ver:[0-9a-f]{64}$/
 const HEX = /^[0-9a-f]{64}$/
-const LEGACY_IN_COMMIT = /^ulv3:[0-9a-f]{64}$/
 /** Whether a string is a version id as written outside commits: `ul:ver:<hex>`. */
 export const isVersionId = (v: unknown): v is string => typeof v === 'string' && VERSION_ID.test(v)
 
 /**
- * The hash a version id names: from `ul:ver:<hex>`, bare hex (as a commit holds it), or the
- * old `ulv3:<hex>`. Null for anything else, a `ulv2:` hash included (that names a v2 root).
+ * The hash a version id names: from `ul:ver:<hex>`, or bare hex (as a commit holds it).
+ * Null for anything else, a `ulv2:` hash included (that names a v2 root).
  */
 export function versionHex(id: string | null | undefined): string | null {
   if (typeof id !== 'string') return null
   if (HEX.test(id)) return id
-  for (const prefix of [VERSION_ID_PREFIX, LEGACY_VERSION_ID_PREFIX]) {
-    if (id.startsWith(prefix) && HEX.test(id.slice(prefix.length))) return id.slice(prefix.length)
-  }
+  if (id.startsWith(VERSION_ID_PREFIX) && HEX.test(id.slice(VERSION_ID_PREFIX.length)))
+    return id.slice(VERSION_ID_PREFIX.length)
   return null
 }
 
@@ -150,15 +147,8 @@ export function sameVersion(a: string | null | undefined, b: string | null | und
   return x !== null && x === versionHex(b)
 }
 
-/** How a commit holds a version: bare hex, or `ulv3:` and hex in one written before 2026-11-18. */
-const isCommitRef = (v: unknown): v is string =>
-  typeof v === 'string' && (HEX.test(v) || LEGACY_IN_COMMIT.test(v))
-
-/** Whether a commit was written before 2026-11-18, with `ulv3:` ids in `previous` or `base`. */
-export const hasLegacyIds = (c: Commit): boolean =>
-  [c.previous, ...c.changes.map((ch) => ch.base)].some(
-    (v) => typeof v === 'string' && LEGACY_IN_COMMIT.test(v),
-  )
+/** How a commit holds a version: bare hex. */
+const isCommitRef = (v: unknown): v is string => typeof v === 'string' && HEX.test(v)
 
 /** The members of a file entry as a commit is written with (Section 4). */
 const FILE_REF_MEMBERS = 'bytes,entries,first,id,last,records,removals'

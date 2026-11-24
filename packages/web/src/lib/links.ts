@@ -1,10 +1,9 @@
 /**
- * Links in record data, for the pages (docs/protocol-v3.md, Section 2.2). The rule is
+ * Links in record data, for the pages (docs/protocol.md, Section 5.2). The rule is
  * `@underlay/protocol`'s `links`; it is repeated here so the page bundle doesn't carry the
  * protocol package. An object with `$link: "ul:<kind>:<hex>"` is a link, with where it was
- * found in `collection`, `type`, and `id`. An asset reference, `{"$asset": "ul:asset:<hex>"}`
- * (or `{"$file": "sha256:<hex>"}`, as records wrote it before 2026-11-22), attaches an asset
- * of the record's collection and is read as a link to it.
+ * found in `collection`, `type`, and `id`. An asset reference, `{"$asset": "ul:asset:<hex>"}`,
+ * attaches an asset of the record's collection and is read as a link to it.
  */
 
 export type LinkKind = 'rec' | 'asset' | 'ver'
@@ -17,7 +16,7 @@ export interface DataLink {
   id?: string
   /** Where it is in the record's data, as a JSON Pointer. */
   path: string
-  /** An asset reference (`$asset`, or `$file`): an asset of the collection the record is in. */
+  /** An asset reference (`$asset`): an asset of the collection the record is in. */
   attached?: boolean
   /** An asset reference's `mediaType`: what the bytes are. */
   mediaType?: string
@@ -36,7 +35,6 @@ export function assetDownloadUrl(owner: string, collection: string, link: DataLi
 
 const UL_ID = /^ul:(rec|asset|ver):([0-9a-f]{64})$/
 const ASSET_ID = /^ul:asset:([0-9a-f]{64})$/
-const FILE_REF = /^sha256:([0-9a-f]{64})$/
 
 const pointer = (path: string, key: string | number) =>
   `${path}/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`
@@ -52,12 +50,7 @@ export function asLink(v: unknown, path = ''): DataLink | null {
       if (typeof o[k] === 'string') link[k] = o[k] as string
     return link
   }
-  const a =
-    typeof o.$asset === 'string'
-      ? ASSET_ID.exec(o.$asset)
-      : typeof o.$file === 'string'
-        ? FILE_REF.exec(o.$file)
-        : null
+  const a = typeof o.$asset === 'string' ? ASSET_ID.exec(o.$asset) : null
   if (!a) return null
   const ref: DataLink = { kind: 'asset', hash: a[1]!, path, attached: true }
   if (typeof o.mediaType === 'string' && o.mediaType.includes('/')) ref.mediaType = o.mediaType

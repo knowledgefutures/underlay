@@ -198,8 +198,7 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
   if (!description) await ensureCollection(store, l.collectionId)
   if (l.authored && head && head.id === v3.versionId(enc.encode(l.authored.commit)))
     return landedBefore(ports, l, head)
-  // The head the change was prepared on, in either spelling (a landing queued before
-  // 2026-11-18 holds a ulv3: id).
+  // The head the change was prepared on.
   const sameHead = head === null ? l.expectHead === null : v3.sameVersion(head.id, l.expectHead)
   if (!sameHead) return { status: 'base_moved', head: head?.id ?? null }
   // Every file the change names is stored (its preparer installed it once checked).

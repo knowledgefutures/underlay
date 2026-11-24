@@ -80,7 +80,8 @@ describe.skipIf(!onV3)('v3 rewrite', () => {
       }),
     )
     expect(dry).toMatchObject({ rewritten: 2, records: 0, dryRun: true })
-    expect((await v3.findHead(h.ports.stores.v3, c.id))!.id).toBe(`ul:ver:${oldHead}`)
+    const stored = await h.ports.stores.v3.get(v3.commitKey(c.id, 3))
+    expect(sha256Hex(await stored!.bytes())).toBe(oldHead)
 
     const done = await json(
       await call('/api/admin/v3/rewrite', {

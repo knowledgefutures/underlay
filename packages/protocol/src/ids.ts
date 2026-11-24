@@ -48,26 +48,25 @@ export function isUlId(v: unknown, kind?: UlKind): v is string {
 
 /**
  * A hash as a person or another system may give it: what it names, and how it was written.
- * `kind` is null for bare hex and `sha256:`, which don't say.
+ * `kind` is null for bare hex, which doesn't say.
  */
 export interface HashInput {
   hash: string
   kind: UlKind | null
   /**
-   * How it was written, when not as a `ul:` id: `hex` for bare hex, `sha256` for v2's file
-   * form, `ulv3` for a v3 version id as written before 2026-11-18 (the same hash as its
-   * `ul:ver:` id), `ulv2` for a v2 version hash, which names a converted version by its
+   * How it was written, when not as a `ul:` id: `hex` for bare hex, `ulv2` for a v2
+   * version hash (v2's own id, until v2 is retired), which names a converted version by its
    * old root and so is not the v3 commit's hash.
    */
-  form: 'ul' | 'hex' | 'sha256' | 'ulv3' | 'ulv2'
+  form: 'ul' | 'hex' | 'ulv2'
 }
 
-const ALIAS = /^(sha256|ulv3|ulv2):([0-9a-f]{64})$/
+const V2_VERSION = /^ulv2:([0-9a-f]{64})$/
 
 /**
- * Read a hash as a person may type or paste it: a `ul:` id, bare hex, `sha256:<hex>`, or a
- * `ulv3:`/`ulv2:` version id. Spaces around it and capital letters are forgiven. Null if
- * it is none of these. For what goes in record data, use `parseUlId`, which is exact.
+ * Read a hash as a person may type or paste it: a `ul:` id, bare hex, or a v2 `ulv2:`
+ * version id. Spaces around it and capital letters are forgiven. Null if it is none of
+ * these. For what goes in record data, use `parseUlId`, which is exact.
  */
 export function parseHashInput(v: unknown): HashInput | null {
   if (typeof v !== 'string') return null
@@ -75,8 +74,6 @@ export function parseHashInput(v: unknown): HashInput | null {
   const id = parseUlId(s)
   if (id) return { ...id, form: 'ul' }
   if (HEX64.test(s)) return { hash: s, kind: null, form: 'hex' }
-  const m = ALIAS.exec(s)
-  if (!m) return null
-  const form = m[1] as 'sha256' | 'ulv3' | 'ulv2'
-  return { hash: m[2]!, kind: form === 'sha256' ? null : 'ver', form }
+  const m = V2_VERSION.exec(s)
+  return m ? { hash: m[1]!, kind: 'ver', form: 'ulv2' } : null
 }

@@ -20,7 +20,6 @@ export {
   assetRefs,
   FILE_NAME_MEMBER,
   fileNameOf,
-  LEGACY_FILE_MEMBER,
   mayHoldAssetRefs,
   MEDIA_TYPE_MEMBER,
   mediaTypeOf,

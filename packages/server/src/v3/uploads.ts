@@ -501,7 +501,7 @@ export function checkChange(
   }
   if ((c.keyId ?? null) !== null || (c.sig ?? null) !== null)
     return 'A signed change is not accepted yet: send it unsigned ("keyId" and "sig" null)'
-  // A change holds its base as bare hex; one given as ul:ver: or ulv3: is taken as that.
+  // A change holds its base as bare hex; one given as ul:ver: is taken as that.
   const base = c.base ?? null
   if (base !== null && v3.versionHex(base) === null)
     return '"change.base" must be a version id: ul:ver:<hex>, or its bare hex'
@@ -1127,10 +1127,8 @@ async function landUpload(ports: Ports, uploadId: string) {
     stats.changes.updated += m.stats.changes.updated
   }
   const cid = upload.collectionId
-  // A change kept before the deploy of 2026-11-22 may hold its base as ulv3:; a commit
-  // holds bare hex (checkChange takes either and keeps hex).
   const change = upload.change
-    ? { ...upload.change, base: v3.versionHex(upload.change.base) ?? upload.change.base }
+    ? upload.change
     : await v3.makeChange(cid, { files, base: upload.base, message: upload.message })
   const obj = await internal.get(preparedKey(upload.id, upload.expectHead))
   if (!obj) {

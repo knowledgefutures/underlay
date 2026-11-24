@@ -373,8 +373,7 @@ export async function reword(c: Coll, number: number | undefined, message: strin
 
 /**
  * A change's base for a commit built again: the new id of a version that was itself built
- * again (`ids` maps old version ids to new ones), as the bare hex a commit holds. A base
- * written `ulv3:` by a CLI from before 2026-11-18 comes out as bare hex too.
+ * again (`ids` maps old version ids to new ones), as the bare hex a commit holds.
  */
 function mapBase(base: string | null, ids: Map<string, string>): string | null {
   if (base === null) return null

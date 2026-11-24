@@ -14,12 +14,6 @@ export const TRAILER_MAGIC = new Uint8Array([0x55, 0x4c, 0x33, 0x53, 0x52, 0x46,
 export const TRAILER_BYTES = 16
 /** Prefix of a version id: `ul:ver:<64 hex>` (Section 2.1). Commits hold the bare hex. */
 export const VERSION_ID_PREFIX = 'ul:ver:'
-/**
- * How version ids were written before 2026-11-18, in responses and inside commits: the same
- * hash. Still read in a commit's `previous` and `base`, and as an alias wherever an id is
- * given; never written.
- */
-export const LEGACY_VERSION_ID_PREFIX = 'ulv3:'
 /** Decimal digits of a commit or layout number in its key. */
 export const NUMBER_WIDTH = 16
 

@@ -59,7 +59,7 @@ export interface V3Version {
   view: v3.View
 }
 
-/** The version a route names (`latest`, a semver, a `ulv3:` id, or a `ulv2:` alias). */
+/** The version a route names (`latest`, a semver, a `ul:ver:` id, or a `ulv2:` alias). */
 export async function v3VersionFor(
   c: Context<AppEnv>,
   access: CollectionAccess,
