@@ -209,13 +209,12 @@ A schema is a JSON object, and is refused unless:
   compiles as an ECMAScript regular expression with the `u` flag. A `pattern` member inside
   `const`, `enum`, `default`, or `examples` is data, and is not checked;
 - every `$ref` resolves within the schema or to the draft-07 meta-schema, against the base URI
-  `https://schema.underlay.invalid/` unless a `$id` sets another;
-- its root `private` member, if present, is a boolean, and no schema that is the value of a
-  member of a `properties` object, at any depth, has `"private": true`.
+  `https://schema.underlay.invalid/` unless a `$id` sets another.
 
-A root `"private": true` marks the type private. A collection is wholly public or private
-(Section 12), so the mark changes nothing about how a version reads; a public collection MUST
-refuse a schema that has it.
+A collection is wholly public or private (Section 12); nothing in a schema makes a type or a
+field private. Informative: the reference server refuses a schema in a public collection whose
+root has `"private": true`, and any schema with `"private": true` on a property, since an
+author who writes either means to hide data that would be published.
 
 ### 4.2 Validation
 
@@ -312,7 +311,9 @@ A record **attaches** an asset with an **asset reference**: an object, at any de
 - Any other member is the publisher's.
 - An asset reference is read as a link to its asset. It is not searched further.
 - A server MUST refuse a record whose data has an object with a `$asset` member that is not a
-  `ul:asset:` id, or with both `$link` and `$asset`.
+  `ul:asset:` id, or with both `$link` and `$asset`. It MUST also refuse an object, outside a
+  link or an asset reference, with a `$file` member: drafts attached assets that way
+  (Appendix D), and a record that still does would look attached and not be.
 - A collection holds what its records attach. It says which assets it holds with `$asset` rows,
   one per asset, whose `size` is the asset's length and whose `mediaType` is an RFC 6838 media
   type of at most 255 characters, or `null`. A server that builds a commit from records adds a

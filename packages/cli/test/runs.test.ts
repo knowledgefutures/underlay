@@ -1,6 +1,5 @@
 /** Scripts and runs (phase 2), and built-in imports (phase 3). */
 import { execFileSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -220,12 +219,11 @@ writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)
     expect(bad.saved).toEqual([])
   })
 
-  it('attaches with an older $file, from files/, as it does with $asset', async () => {
+  it('stops the save at a $file, which no collection takes any more', async () => {
     const w = await world()
     const meta = newCollection(w.ctx, 'test/org/papers')
     w.home.writeSchemas(meta, { Paper: { type: 'object' } })
     mkdirSync(join(w.home.root, 'scripts'), { recursive: true })
-    // One record each way, and the same bytes named both ways: one asset, stored once.
     writeFileSync(
       join(w.home.root, 'scripts', 'papers.mjs'),
       `// underlay: writes test/org/papers
@@ -234,32 +232,19 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 const out = process.env.UNDERLAY_OUT
 mkdirSync(out + '/test/org', { recursive: true })
 mkdirSync(out + '/files', { recursive: true })
-mkdirSync(out + '/assets', { recursive: true })
 const sha = (b) => createHash('sha256').update(b).digest('hex')
-const a = Buffer.from('first paper'), b = Buffer.from('second paper')
+const a = Buffer.from('first paper')
 writeFileSync(out + '/files/a.pdf', a)
-writeFileSync(out + '/assets/b.pdf', b)
-const rows = [
-  { id: 'p1', type: 'Paper', data: { pdf: { $file: 'sha256:' + sha(a) } } },
-  { id: 'p2', type: 'Paper', data: { pdf: { $asset: 'ul:asset:' + sha(b) } } },
-  { id: 'p3', type: 'Paper', data: { pdf: { $asset: 'ul:asset:' + sha(a) } } },
-]
+const rows = [{ id: 'p1', type: 'Paper', data: { pdf: { $file: 'sha256:' + sha(a) } } }]
 writeFileSync(out + '/test/org/papers.ndjson', rows.map((r) => JSON.stringify(r)).join('\\n') + '\\n')
 `,
     )
     const r = await runScript(w.ctx, findScript(w.ctx, 'papers'), [], {})
-    expect(r.status).toBe('ok')
-    expect(r.saved).toMatchObject([
-      { collection: 'test/org/papers', added: 3, files: { added: 2, bytes: 23, here: 0 } },
-    ])
-    const { assetsHere, listAssets } = await import('../src/core/assets.js')
-    const c = openColl(w.ctx, meta)
-    const sha = (t: string) => createHash('sha256').update(t).digest('hex')
-    const listed = await listAssets(c)
-    expect(listed.map((a) => a.hash).sort()).toEqual(
-      [sha('first paper'), sha('second paper')].sort(),
+    expect(r.status).toBe('failed')
+    expect(r.error).toBe(
+      'org/papers: Paper p1: $file at /pdf is not read: attach an asset with {"$asset": "ul:asset:<hex>"}',
     )
-    expect(await assetsHere(c, listed)).toHaveLength(2)
+    expect(r.saved).toEqual([])
   })
 
   it('stops the save at a malformed $asset, with the protocol’s message', async () => {

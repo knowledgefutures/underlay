@@ -26,6 +26,7 @@ import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import { mirrorCollectionInfo } from '../locations/mirror.js'
 import type { Ports } from '../ports.js'
+import { syncDescription } from '../v3/authority.js'
 
 /**
  * Keep `collection.json` current. With a signer (a commit about to sign an
@@ -96,8 +97,12 @@ registerJob('collection.info.org', async (job, ports) => {
 
 registerJob('collection.info', async (job, ports) => {
   const collectionId = String(job.collectionId)
-  // v2's collection.json; a v3 collection keeps its description in its own log.
-  if ((await ports.stores.layoutOf(collectionId)) === 'v3') return
+  // A v3 collection's description says whether it is public and which keys sign it
+  // (docs/protocol.md, Section 12); v2's collection.json says more.
+  if ((await ports.stores.layoutOf(collectionId)) === 'v3') {
+    await syncDescription(ports, collectionId)
+    return
+  }
   const repo = await ports.stores.forCollection(collectionId)
   const out = await publishCollectionInfo(ports, repo, collectionId)
   if (out?.changed) await mirrorCollectionInfo(ports, collectionId, out.info)

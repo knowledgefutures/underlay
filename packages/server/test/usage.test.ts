@@ -14,6 +14,7 @@ import {
 } from '../src/billing/usage.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, harness } from './harness.js'
+import { attach } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -39,9 +40,7 @@ describe('usage', () => {
     await h.request(`${base}/push/${sid}/records`, {
       method: 'POST',
       user,
-      ndjson: [
-        { id: 'a', type: 'Doc', data: { title: 'A', pdf: { $file: `sha256:${sha(pdf)}` } } },
-      ],
+      ndjson: [{ id: 'a', type: 'Doc', data: { title: 'A', pdf: attach(sha(pdf)) } }],
     })
     await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
 

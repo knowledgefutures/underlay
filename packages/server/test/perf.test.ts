@@ -12,6 +12,7 @@ import { deniedHashes } from '../src/lib/limits.js'
 import type { Db } from '../src/ports.js'
 import { createStores } from '../src/stores.js'
 import { cleanup, harness } from './harness.js'
+import { attach } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -46,7 +47,7 @@ async function setup() {
       {
         id: 'big',
         type: 'Doc',
-        data: { title: 'x'.repeat(70_000), pdf: { $file: `sha256:${sha(pdf)}` } },
+        data: { title: 'x'.repeat(70_000), pdf: attach(sha(pdf)) },
       },
     ],
   })

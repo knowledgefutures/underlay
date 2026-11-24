@@ -103,6 +103,8 @@ export async function prepareRecords(
   opts: {
     stripUnknownFields: boolean
     packed?: boolean
+    /** Accept `$file` references: v2's way of attaching a file. */
+    legacyFiles?: boolean
     maxLines?: number
     /** Each accepted record as it's read (a key-ordered session's packing), with its line number. */
     place?: (e: RunEntry, line: number) => Promise<void>
@@ -186,10 +188,14 @@ export async function prepareRecords(
       fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: errs })
       continue
     }
-    // A malformed link or asset reference is refused, not stored as data that looks like one
-    // (Sections 2.2 and 2.3).
+    // A malformed link or asset reference is refused, not stored as data that looks like one,
+    // and so is a `$file` (docs/protocol.md, Sections 5.2 and 5.3).
     const linkProblem =
-      canonical.includes('"$link"') || canonical.includes('"$asset"') ? checkLinks(data) : null
+      canonical.includes('"$link"') ||
+      canonical.includes('"$asset"') ||
+      canonical.includes('"$file"')
+        ? checkLinks(data, { legacyFiles: opts.legacyFiles === true })
+        : null
     if (linkProblem) {
       fail({ line: i + 1, recordId: rec.id, type: rec.type, errors: [linkProblem] })
       continue
@@ -241,6 +247,8 @@ export async function ingestRecords(
     prepared = await prepareRecords(ports, session.id, inputs, input, {
       stripUnknownFields: session.stripUnknownFields,
       packed: onV3 || records !== null,
+      // v2 attaches files with `$file`; a v3 collection refuses it (docs/protocol.md 5.3).
+      legacyFiles: !onV3,
       maxLines: limits.lines,
       ...(placer ? { place: placer.place } : {}),
     })

@@ -11,7 +11,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { MAX_BATCH_HASHES } from '../src/api/records.js'
 import * as schema from '../src/db/schema.js'
 import { cleanup, type Harness, harness } from './harness.js'
-import { itNotOnV3 } from './layouts.js'
+import { attach, itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -62,7 +62,7 @@ describe('D1 limits', () => {
       bodies.map((b, i) => ({
         id: `d${i}`,
         type: 'Doc',
-        data: { pdf: { $file: `sha256:${sha(b)}` } },
+        data: { pdf: attach(sha(b)) },
       })),
     )
     const res = await h.request(`${base}/versions/latest/files`, { user })

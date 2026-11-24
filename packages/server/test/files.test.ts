@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { inertBlobResponse } from '../src/files/files.js'
 import { cleanup, harness } from './harness.js'
-import { itNotOnV3 } from './layouts.js'
+import { attach, itNotOnV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -192,7 +192,7 @@ describe('files', () => {
       await h.request(`${base}/push/${sid}/records`, {
         method: 'POST',
         user,
-        ndjson: [{ id: 'd', type: 'Doc', data: { pdf: { $file: `sha256:${hash}` } } }],
+        ndjson: [{ id: 'd', type: 'Doc', data: { pdf: attach(hash) } }],
       })
       const res = await h.request(`${base}/push/${sid}/commit`, { method: 'POST', user })
       return { status: res.status, body: JSON.stringify(await json(res)).replaceAll(hash, 'H') }
@@ -265,7 +265,7 @@ describe('files', () => {
       }
       expect(
         await push([
-          { id: 'p', type: 'Doc', data: { pdf: { $file: `sha256:${sha(old)}` } }, private: true },
+          { id: 'p', type: 'Doc', data: { pdf: attach(sha(old)) }, private: true },
           { id: 'q', type: 'Doc', data: { title: 'stays' } },
         ]),
       ).toBe(201)
@@ -332,19 +332,19 @@ describe('files', () => {
           {
             id: 'd1',
             type: 'Doc',
-            data: { title: 'Public', pdf: { $file: `sha256:${sha(pub)}` } },
+            data: { title: 'Public', pdf: attach(sha(pub)) },
           },
           {
             id: 'd2',
             type: 'Doc',
-            data: { title: 'Private', pdf: { $file: `sha256:${sha(priv)}` } },
+            data: { title: 'Private', pdf: attach(sha(priv)) },
             private: true,
           },
-          { id: 'd3', type: 'Doc', data: { title: 'Again', pdf: { $file: `sha256:${sha(pub)}` } } },
+          { id: 'd3', type: 'Doc', data: { title: 'Again', pdf: attach(sha(pub)) } },
           {
             id: 'd4',
             type: 'Doc',
-            data: { title: 'Hidden', pdf: { $file: `sha256:${sha(pub)}` } },
+            data: { title: 'Hidden', pdf: attach(sha(pub)) },
             private: true,
           },
         ],
@@ -393,7 +393,7 @@ describe('files', () => {
     const big = (title: string) => ({
       id: 'big',
       type: 'Doc',
-      data: { title: title + 'x'.repeat(70_000), pdf: { $file: `sha256:${sha(pdf)}` } },
+      data: { title: title + 'x'.repeat(70_000), pdf: attach(sha(pdf)) },
     })
     const push = async (open: object, records: object[], deletes: object[] = []) => {
       const sid = (

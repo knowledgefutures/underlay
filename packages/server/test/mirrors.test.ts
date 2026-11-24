@@ -23,7 +23,7 @@ import * as schema from '../src/db/schema.js'
 import { PRIVATE_COLLECTION_ERROR } from '../src/locations/mirror-v3.js'
 import { mirrorConfig } from '../src/locations/mirror.js'
 import { cleanup, type Harness, harness } from './harness.js'
-import { describeNotOnV3, onV3 } from './layouts.js'
+import { attach, describeNotOnV3, onV3 } from './layouts.js'
 
 const fakes: FakeS3[] = []
 afterAll(async () => {
@@ -148,7 +148,7 @@ async function setup(storage: Parameters<typeof harness>[0] = {}) {
   const v1 = await push(h, user, path, { schemas: { Book } }, [
     ...Array.from({ length: 2500 }, (_, i) => book(`b${i}`, `T${i}`)),
     book('cover', 'with a cover', {
-      data: { title: 'c', cover: { $file: `sha256:${sha(cover)}` } },
+      data: { title: 'c', cover: attach(sha(cover)) },
     }),
     book('secret', 'hidden', { private: true }),
   ])
@@ -676,7 +676,7 @@ describe.skipIf(!onV3)('bucket mirrors of v3 collections', () => {
     await push(h, user, path, { schemas: { Book } }, [
       ...Array.from({ length: 2500 }, (_, i) => book(`b${i}`, `T${i}`)),
       book('cover', 'with a cover', {
-        data: { title: 'c', cover: { $file: `sha256:${sha(cover)}` } },
+        data: { title: 'c', cover: attach(sha(cover)) },
       }),
     ])
     const v2 = await push(

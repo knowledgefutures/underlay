@@ -85,3 +85,10 @@ export async function metadataAt(
   const repo = await ports.stores.forCollection(collectionId)
   return (await repo.root(versionHash)).metadata
 }
+
+/**
+ * An asset reference in record data, as the test's layout attaches one: `$asset` on v3,
+ * which refuses `$file`; `$file` on v2, which reads nothing else.
+ */
+export const attach = (hash: string): Record<string, string> =>
+  onV3 ? { $asset: `ul:asset:${hash}` } : { $file: `sha256:${hash}` }

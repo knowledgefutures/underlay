@@ -20,7 +20,13 @@ import { and, eq, isNull } from 'drizzle-orm'
 
 import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
-import { authorityIn, ensureCollection, notAuthority, writeReceiptFor } from './authority.js'
+import {
+  authorityIn,
+  ensureCollection,
+  notAuthority,
+  syncDescription,
+  writeReceiptFor,
+} from './authority.js'
 import {
   applyStats,
   type CommitStats,
@@ -247,6 +253,8 @@ export async function landCommit(ports: Ports, l: Landing): Promise<Landed> {
       throw err
     }
   await writeReceiptFor(ports, l.collectionId, stored)
+  // Its description names the key that signed it, and says whether it is public.
+  await syncDescription(ports, l.collectionId)
   mark()
   const before = await lastRow(ports, l.collectionId)
   const version = await recordCommit(ports, {

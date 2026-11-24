@@ -17,7 +17,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import * as schema from '../src/db/schema.js'
 import { withAssetNames } from '../src/lib/asset-names.js'
 import { cleanup, type Harness, harness, outboundCalls, respondOutbound } from './harness.js'
-import { onV3 } from './layouts.js'
+import { attach, onV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -112,7 +112,7 @@ describe('asset names', () => {
       user,
       base,
       { schemas: { Doc }, assets: { add: [sha(other)] } },
-      [{ id: 'd', type: 'Doc', data: { title: 'D', pdf: { $file: `sha256:${sha(bytes)}` } } }],
+      [{ id: 'd', type: 'Doc', data: { title: 'D', pdf: attach(sha(bytes)) } }],
     )
     expect(committed.res!.status).toBe(201)
 

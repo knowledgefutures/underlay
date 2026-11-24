@@ -93,13 +93,14 @@ describe('links', () => {
     expect(checkLinks({ x: { $link: `ul:rec:${a}`, id: 7 } })).toMatch(/"id"/)
   })
 
-  it('reads v2 file references as asset links, and does not search inside a link', () => {
+  it('refuses $file, reads stored ones as asset links, and does not search inside a link', () => {
     const data = {
       pdf: { $file: `sha256:${b}`, name: 'p.pdf' },
       bad: { $file: 'sha256:short', inner: { $link: `ul:rec:${a}` } },
       l: { $link: `ul:rec:${a}`, note: { $link: 'not searched' } },
     }
-    expect(checkLinks(data)).toBeNull()
+    expect(checkLinks(data)).toMatch(/^\$file at \/pdf is not read/)
+    expect(checkLinks({ l: { $link: `ul:rec:${a}`, x: { $file: 'y' } } })).toBeNull()
     expect(links(data).map((l) => [l.path, l.kind, l.attached ?? false])).toEqual([
       ['/pdf', 'asset', true],
       ['/bad/inner', 'rec', false],

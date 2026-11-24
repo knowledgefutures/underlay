@@ -15,7 +15,7 @@ import { recoverCommits, recoverConfig } from '../src/push/recover.js'
 import { headView, lastRow, rowsOfType } from '../src/v3/catalog.js'
 import { buildPart, sessionBuildConfig } from '../src/v3/session-build.js'
 import { cleanup, type Harness, harness } from './harness.js'
-import { onV3 } from './layouts.js'
+import { attach, onV3 } from './layouts.js'
 
 afterAll(cleanup)
 const defaults = { build: { ...sessionBuildConfig }, recover: { ...recoverConfig } }
@@ -180,7 +180,7 @@ describe.skipIf(!onV3)('v3 session commits in parts', () => {
     ).toBe(201)
     const withPhoto = (i: number, f: string) => ({
       ...author(i),
-      data: { ...author(i).data, photo: { $file: `sha256:${sha(f)}` } },
+      data: { ...author(i).data, photo: attach(sha(f)) },
     })
     const rows = records.map((r, i) =>
       i === 100 ? withPhoto(100, photo) : i === 900 ? withPhoto(900, never) : r,

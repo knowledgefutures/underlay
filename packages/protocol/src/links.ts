@@ -83,9 +83,14 @@ function placeProblem(o: Record<string, unknown>): string | null {
 
 /**
  * The first malformed link in a record's data, as a message naming where it is, or null
- * if every link is well formed. A server refuses a record with one.
+ * if every link is well formed. A server refuses a record with one. A `$file` member, how
+ * drafts attached assets before `$asset`, is refused too, so no new record carries it.
  */
-export function checkLinks(data: unknown): string | null {
+export function checkLinks(
+  data: unknown,
+  /** `legacyFiles`: accept `$file` (v2's way of attaching a file, which v2 still reads). */
+  opts: { legacyFiles?: boolean } = {},
+): string | null {
   // Keys down to where the walk is; joined into a path only for a problem, since building a
   // path at every node cost ten times the walk itself (2026-11-23, a 4 KB record).
   const keys: (string | number)[] = []
@@ -111,6 +116,9 @@ export function checkLinks(data: unknown): string | null {
     if (Object.hasOwn(v, '$asset')) {
       const ref = assetRefIn(v)
       return ref && 'bad' in ref ? `$asset at ${at()} ${assetValueProblem(ref.bad)}` : null
+    }
+    if (!opts.legacyFiles && Object.hasOwn(v, '$file')) {
+      return `$file at ${at()} is not read: attach an asset with {"$asset": "ul:asset:<hex>"}`
     }
     for (const k in v) {
       keys.push(k)

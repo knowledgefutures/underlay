@@ -8,7 +8,7 @@ import { type FakeS3, startFakeS3 } from '../../protocol/test/stores/fake-s3.js'
 import * as schema from '../src/db/schema.js'
 import { INFO_BACKFILL_MARKER, queueInfoBackfill } from '../src/versions/collection-info.js'
 import { cleanup, type Harness, harness } from './harness.js'
-import { describeNotOnV3, onV3 } from './layouts.js'
+import { attach, describeNotOnV3, onV3 } from './layouts.js'
 
 const fakes: FakeS3[] = []
 afterAll(async () => {
@@ -232,7 +232,7 @@ describe('collection URLs (spec 11.3.1)', () => {
     const cover = 'cover bytes'
     await h.request(`${path}/files/${sha(cover)}`, { method: 'PUT', user, body: cover })
     await push(h, user, path, { schemas: { Book } }, [
-      book('a', { title: 'a', cover: { $file: `sha256:${sha(cover)}` } }),
+      book('a', { title: 'a', cover: attach(sha(cover)) }),
     ])
     const diff = (await (await h.request(`${path}/versions/latest/diff`, { user })).json()) as {
       from: string | null

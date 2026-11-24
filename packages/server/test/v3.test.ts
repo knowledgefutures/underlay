@@ -27,7 +27,7 @@ import { durableQueue, serially } from '../src/v3/queue.js'
 import { scanConfig } from '../src/v3/scans.js'
 import { recoverUploads, uploadLimits } from '../src/v3/uploads.js'
 import { cleanup, type Harness, harness } from './harness.js'
-import { onV3 } from './layouts.js'
+import { attach, onV3 } from './layouts.js'
 
 afterAll(cleanup)
 
@@ -385,13 +385,13 @@ describe.skipIf(!onV3)('v3 collections', () => {
       user,
       base,
       { schemas: { Book }, files: { add: [sha(loose), sha(never)] } },
-      [{ id: 'x', type: 'Book', data: { title: 'X', cover: { $file: `sha256:${sha(cover)}` } } }],
+      [{ id: 'x', type: 'Book', data: { title: 'X', cover: attach(sha(cover)) } }],
     )
     expect(res.status).toBe(422)
     expect(await json(res)).toMatchObject({ error: 'Missing files', filesNeeded: [sha(never)] })
 
     res = await push(h, user, base, { schemas: { Book }, files: { add: [sha(loose)] } }, [
-      { id: 'x', type: 'Book', data: { title: 'X', cover: { $file: `sha256:${sha(cover)}` } } },
+      { id: 'x', type: 'Book', data: { title: 'X', cover: attach(sha(cover)) } },
     ])
     expect(res.status).toBe(201)
     expect(await json(res)).toMatchObject({ fileCount: 2 })
@@ -878,7 +878,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       base,
       { schemas: { Doc, [LONG]: Doc }, metadata: { readme: '# Lib\n' } },
       [
-        { id: 'd1', type: 'Doc', data: { title: 'Ünïcode ✓', f: { $file: `sha256:${fileHash}` } } },
+        { id: 'd1', type: 'Doc', data: { title: 'Ünïcode ✓', f: attach(fileHash) } },
         { id: 'd2', type: 'Doc', data: { title: 'two' } },
         { id: 'l1', type: LONG, data: { x: 1 } },
       ],
@@ -915,7 +915,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
     await h.request(`${base}/files/${fileHash}`, { method: 'PUT', user, body: file })
     const Doc = { type: 'object' }
     let res = await push(h, user, base, { schemas: { Doc } }, [
-      { id: 'a', type: 'Doc', data: { f: { $file: `sha256:${fileHash}` } } },
+      { id: 'a', type: 'Doc', data: { f: attach(fileHash) } },
     ])
     expect(res.status).toBe(201)
     res = await push(h, user, base, { base: 'v1.0.0' }, [{ id: 'b', type: 'Doc', data: {} }])

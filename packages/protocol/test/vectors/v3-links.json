@@ -171,7 +171,7 @@
           "name": "paper.pdf"
         }
       },
-      "problem": null,
+      "problem": "$file at /pdf is not read: attach an asset with {\"$asset\": \"ul:asset:<hex>\"}",
       "links": [
         {
           "kind": "asset",
@@ -224,7 +224,7 @@
           "$link": "ul:rec:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
       },
-      "problem": null,
+      "problem": "$file at / is not read: attach an asset with {\"$asset\": \"ul:asset:<hex>\"}",
       "links": [
         {
           "kind": "rec",
@@ -337,7 +337,7 @@
           }
         ]
       },
-      "problem": null,
+      "problem": "$file at /figures/1 is not read: attach an asset with {\"$asset\": \"ul:asset:<hex>\"}",
       "links": [
         {
           "kind": "asset",
