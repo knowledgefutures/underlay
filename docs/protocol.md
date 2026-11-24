@@ -1,0 +1,882 @@
+# The Underlay protocol
+
+**Version:** 3 (the `underlay` member of every object this document defines).
+
+**Status:** Draft, 2026-11-23. This document replaces `protocol-v3.md` and, for everything
+version 3 uses, `protocol-v2.md`. It is meant to be read alone: nothing here depends on an
+earlier version's document, on the reference implementation, or on a server being online.
+
+**Change control.** A change to any rule that alters which inputs are accepted, what bytes are
+written, or what is hashed needs a new protocol version. Clarifications that change none of
+these are listed in Appendix D.
+
+**Reference implementation.** `@underlay/protocol` (`packages/protocol` in the Underlay
+repository). Test vectors are listed in Appendix B. Where this document and the reference
+implementation disagree, this document is authoritative.
+
+## Contents
+
+1. Conventions
+2. Canonical JSON
+3. Records
+4. Schemas
+5. Underlay ids, links, and assets
+6. Sorted-record-file
+7. Commit
+8. Authority, receipts, and following a collection
+9. Layout file
+10. Reading a version
+11. Rebuild
+12. Collection
+13. Limits and constants
+14. Security considerations
+
+Appendix A. Reading a collection by hand (informative)
+Appendix B. Test vectors
+Appendix C. The reference server's storage (informative)
+Appendix D. History (informative)
+
+## 1. Conventions
+
+### 1.1 Requirements language
+
+The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", and "MAY" are to be interpreted as
+described in BCP 14 (RFC 2119, RFC 8174) when, and only when, they appear in all capitals.
+Sections and paragraphs marked _informative_, and all examples and notes, are not normative.
+
+### 1.2 Terms
+
+- **Collection:** a numbered log of commits, with the files and assets they name (Section 12).
+- **Record:** an id, a type, and data, a JSON value. Its **key** is (type, id).
+- **Type:** a named class of records, described by a schema.
+- **Schema:** a JSON Schema document that every record of one type satisfies (Section 4).
+- **Asset:** a byte string held by a collection beside its records and named by its SHA-256: a
+  PDF, an image, a dataset's attachments (Section 5.3).
+- **Sorted-record-file:** an immutable file of record lines in key order with a table of
+  contents, named by its **file id** (Section 6).
+- **Commit:** a numbered object naming the sorted-record-files one upload added (Section 7).
+- **Version:** the commits of a collection up to and including one commit.
+- **Layout file:** a numbered object, written by a rebuild, listing the sorted-record-files that
+  hold everything through a commit (Section 9).
+- **Rebuild:** writing new sorted-record-files that hold the rows of older ones (Section 11).
+- **Authority:** the one server that accepts a collection's commits (Section 8).
+- **Server:** an HTTP service that holds collections. **Client:** anyone that reads from or
+  writes to one.
+
+### 1.3 Notation
+
+- **hash(x)** is the SHA-256 digest (FIPS 180-4) of the bytes `x`, written as 64 lowercase
+  hexadecimal characters. A string is hashed as its UTF-8 encoding.
+- **JCS(v)** is the canonical JSON text of the value `v` (Section 2).
+- `+` between strings is concatenation.
+- Sizes are in bytes. KiB, MiB, and GiB are 2¹⁰, 2²⁰, and 2³⁰ bytes.
+- A **count** is a whole number from 0 to 2⁵³ − 1.
+- Times are ISO 8601 in UTC, written as `YYYY-MM-DDTHH:MM:SS.sssZ`.
+- **base64url** is RFC 4648 Section 5, without padding.
+
+## 2. Canonical JSON
+
+Every JSON text this protocol hashes is written in one way, the JSON Canonicalization Scheme
+(RFC 8785). In full:
+
+- **Whitespace:** none outside strings.
+- **Literals:** `true`, `false`, and `null`.
+- **Arrays:** members in their order, separated by `,`.
+- **Objects:** members sorted by their names, compared as sequences of UTF-16 code units, each
+  written as a string, `:`, and the value, separated by `,`. (This order is not key order,
+  Section 3.3, which compares UTF-8 bytes. The two differ only for characters at or above
+  U+10000.)
+- **Strings:** `"`, then each character as itself, except: `"` as `\"`, `\` as `\\`, U+0008 as
+  `\b`, U+0009 as `\t`, U+000A as `\n`, U+000C as `\f`, U+000D as `\r`, any other character from
+  U+0000 to U+001F as `\u` and four lowercase hex digits; then `"`. Every other character,
+  U+007F and all of non-ASCII included, is written as itself in UTF-8. Strings are not
+  normalized: `é` as U+00E9 and as U+0065 U+0301 are different strings.
+- **Numbers:** every number is an IEEE 754 binary64 value, written as follows.
+  - Zero, positive or negative, is `0`.
+  - A negative number is `-` followed by its magnitude written by these rules.
+  - Otherwise, let `k` be the smallest number of decimal digits, and `s` those digits (an
+    integer with `k` digits, the first not 0), and `n` an integer, such that `s × 10^(n−k)` is
+    exactly the value when read back as the nearest binary64. If more than one `s` of `k` digits
+    does this, take the one whose `s × 10^(n−k)` is nearest the value, and of two equally near,
+    the even one. Then:
+    - if `k ≤ n ≤ 21`: the `k` digits, then `n − k` zeros;
+    - if `0 < n ≤ 21`: the first `n` digits, `.`, the other `k − n` digits;
+    - if `−6 < n ≤ 0`: `0.`, then `−n` zeros, then the `k` digits;
+    - otherwise: the first digit, then, if `k > 1`, `.` and the other digits, then `e`, then `+`
+      or `-`, then the absolute value of `n − 1` in decimal.
+
+  This is ECMAScript's `Number.prototype.toString`. Examples: `1`, `0.5`, `1e+21`, `1e-7`,
+  `123.456`, `5e-324`, `1.7976931348623157e+308`.
+
+Informative: an implementation in a language whose standard library prints the shortest
+round-trip digits (most do: Ryu, Grisu, `repr` in Python 3) needs only the layout rules above.
+ECMAScript objects list integer-like names (`"9"`, `"10"`) first whatever their insertion order,
+so sorting the names and calling `JSON.stringify` is not JCS; write the members yourself.
+
+## 3. Records
+
+### 3.1 Input lines
+
+A client sends records as lines of JSON text, each one of:
+
+- a **record**: an object with exactly the members `id`, `type`, and `data`;
+- a **removal**: an object with exactly the members `id`, `type`, and `removed`, whose value is
+  `true`. It says the record with that key is removed.
+
+A client MUST check these rules on every line it sends, and a server MUST check them on every line
+it receives. They are checked on the text, since a parsed value no longer shows some of them. A
+line is refused, with the code shown, if:
+
+| Rule            | A line is refused if                                                                                                                                                                  | Code               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| Syntax          | it is not JSON (RFC 8259), including an unterminated string or a `\u` escape without exactly four hex digits                                                                          | `syntax`           |
+| Duplicate names | an object has two members whose names are equal once unescaped                                                                                                                       | `duplicate_key`    |
+| Unsafe integers | it has an integer literal (no fraction, no exponent) whose magnitude is over 2⁵³ − 1 (`9007199254740991`). A literal with a fraction or exponent is accepted, as its binary64 value | `unsafe_integer`   |
+| Lone surrogates | a string or name holds a UTF-16 surrogate, literal or `\u`-escaped, that is not half of a pair                                                                                        | `lone_surrogate`   |
+| Depth           | it nests more than 65 levels: each object or array is a level, and the line itself is level 1, so `data` may nest 64                                                                  | `too_deep`         |
+| Envelope        | it is not an object; or it is not exactly a record or a removal as above                                                                                                              | `bad_envelope`     |
+| Type            | `type` breaks Section 3.4                                                                                                                                                            | `bad_type`         |
+| Id              | `id` breaks Section 3.4                                                                                                                                                              | `bad_id`           |
+| Size            | the record line (3.2) is longer than 8,388,608 bytes                                                                                                                                  | `record_too_large` |
+
+A line that breaks more than one rule is reported with the first code in this order:
+
+1. The text is read from the start, and the first of these met decides: an unterminated string or
+   bad escape (`syntax`), a duplicate name, an unsafe integer, a lone surrogate, or too much
+   depth. Otherwise, a text that is not JSON is `syntax`.
+2. `bad_envelope`, if the line is not an object.
+3. `bad_type`.
+4. `bad_id`.
+5. `bad_envelope`, if the members are not exactly a record's or a removal's.
+6. `record_too_large`.
+
+### 3.2 Lines
+
+What is stored, and hashed, is not the input line but its canonical form:
+
+- **Record line:** `{"id":` + JCS(id) + `,"type":` + JCS(type) + `,"data":` + JCS(data) + `}`.
+  The three members are always in this order (it is not JCS member order).
+- **Removal line:** `{"id":` + JCS(id) + `,"removed":true,"type":` + JCS(type) + `}`.
+
+A line is UTF-8 and, where stored, ends with `\n`. Its **size** is its length in bytes without
+the `\n`. The **record hash** is hash(record line). A removal line has no hash.
+
+### 3.3 Key order
+
+Keys are ordered by type, then by id. Each is compared as its UTF-8 bytes, byte by byte, and a
+string that is a prefix of another comes first. This is Unicode code point order.
+Implementations MUST NOT compare UTF-16 code units (ECMAScript's `<` and default `sort()`),
+which order differently when one string has a character at or above U+10000 where the other has
+one from U+E000 to U+FFFF.
+
+### 3.4 Types and ids
+
+An **id** is a string of 1 to 1,024 UTF-8 bytes.
+
+A **type** is a string of 1 to 128 UTF-8 bytes that does not begin with `.` and holds no `/`,
+`\`, U+0000 to U+001F, or U+007F. Types beginning with `$` are reserved:
+
+| Type      | Id                                     | Data                                                                    |
+| --------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| `$schema` | a publisher's type                     | that type's schema (Section 4)                                          |
+| `$asset`  | an asset's SHA-256, 64 lowercase hex   | `{"size": count, "mediaType": string or null}` (Section 5.3)            |
+| `$meta`   | `collection`                           | an object: the collection's metadata (a name, a readme; the publisher's) |
+
+No other `$` type is valid. A **publisher's type** (any other) MUST NOT begin with a character
+that sorts before `$` (U+0020 to U+0023), so that every reserved row sorts before every record,
+and MUST NOT be `__proto__`. Neither a type nor an id may hold a lone surrogate (3.1 already
+refuses one in an input line).
+
+### 3.5 Rows in a version
+
+Within a version, a key names at most one record.
+
+## 4. Schemas
+
+A record of a publisher's type `T` in a version MUST satisfy the `$schema` row for `T` in that
+version, and a type with records MUST have a `$schema` row. The **schema hash** is
+hash(JCS(schema)).
+
+### 4.1 Acceptance
+
+A schema is a JSON object, and is refused unless:
+
+- it is a JSON Schema draft-07 document: its root `$schema`, if present, is
+  `http://json-schema.org/draft-07/schema` or `http://json-schema.org/draft-07/schema#`, and it
+  is valid against the draft-07 meta-schema;
+- its JCS is at most 262,144 bytes;
+- every `pattern` value and `patternProperties` name is at most 256 UTF-16 code units, and
+  compiles as an ECMAScript regular expression with the `u` flag. A `pattern` member inside
+  `const`, `enum`, `default`, or `examples` is data, and is not checked;
+- every `$ref` resolves within the schema or to the draft-07 meta-schema, against the base URI
+  `https://schema.underlay.invalid/` unless a `$id` sets another;
+- its root `private` member, if present, is a boolean, and no schema that is the value of a
+  member of a `properties` object, at any depth, has `"private": true`.
+
+A root `"private": true` marks the type private. A collection is wholly public or private
+(Section 12), so the mark changes nothing about how a version reads; a public collection MUST
+refuse a schema that has it.
+
+### 4.2 Validation
+
+A record's `data` is validated against its type's schema under draft-07, with these
+refinements:
+
+- keywords next to `$ref` are applied, as in draft 2019-09;
+- keywords draft-07 does not define are ignored, later drafts' included (`unevaluatedProperties`,
+  `dependentRequired`, `prefixItems`); `$defs` is honored as a container of subschemas, and
+  `$anchor` is honored;
+- `pattern` is an ECMAScript regular expression with the `u` flag;
+- `multipleOf` m accepts x when the floating-point remainder r = x mod m has
+  |r| < 1.1920929 × 10⁻⁷ or |m − r| < 1.1920929 × 10⁻⁷;
+- string length is counted in Unicode code points;
+- an object's members are the parsed document's own names; `__proto__` and `toString` mean
+  nothing special.
+
+`format` constrains strings only, and only for `date`, `time`, `date-time`, `iso-time`,
+`iso-date-time`, `duration`, `uri`, `uri-reference`, `uri-template`, `url`, `email`, `hostname`,
+`ipv4`, `ipv6`, `regex`, `uuid`, `json-pointer`, `json-pointer-uri-fragment`,
+`relative-json-pointer`, and `byte`, each as ajv-formats 3.0 defines it in "full" mode. In
+particular `date-time` and `time` need a time zone, `date-time` takes `T`, `t`, or a space
+between date and time, and `email` needs a dot in the domain. Other format names are ignored.
+
+Only the verdict, valid or not, is normative.
+
+### 4.3 Changing a schema
+
+When a commit changes a type's schema, every record of that type the version carries over MUST
+satisfy the new schema, and the commit MUST be refused if any does not. A change that only
+relaxes the schema (every document valid before is valid after) needs no check of the records
+carried over. A record whose line a server withholds (Section 11) is not checked.
+
+## 5. Underlay ids, links, and assets
+
+### 5.1 Underlay ids
+
+Outside the protocol's own objects (in record data, URLs, API responses, and citations), a
+record, an asset, or a version is named by an **Underlay id**:
+
+```
+ul:rec:<hex>      a record: its record hash (3.2)
+ul:asset:<hex>    an asset: the hash of its bytes
+ul:ver:<hex>      a version: its version id (Section 7)
+```
+
+`<hex>` is 64 lowercase hex characters. An id is exact, with no other spelling. A schema is a
+`$schema` record, so `ul:rec:` names schemas too. Other kinds are reserved.
+
+Inside a commit, a layout file, a file entry, or a receipt, a hash is bare hex: the member it is
+in says what it is, so no way of writing an id is part of what is hashed. Every id is the hash of
+stored bytes, which a reader checks by hashing what it fetched, and those bytes say their own
+format; so no id carries a version number.
+
+Informative: a server should take an id wherever a person gives one (a URL, a search) as an
+Underlay id or as bare hex.
+
+### 5.2 Links
+
+A record points at another record, an asset, or a version with a **link**: an object, at any
+depth of its `data`, with a `$link` member.
+
+```
+{"$link": "ul:rec:<hex>",   "collection": collection id, "type": string, "id": string}
+{"$link": "ul:asset:<hex>", "collection": collection id}
+{"$link": "ul:ver:<hex>",   "collection": collection id}
+```
+
+- `$link` is an Underlay id; its prefix says what the link points at.
+- `collection`, `type`, and `id` are optional. They say where the target was found: the id of a
+  collection that holds it, and for a record its key there. A reader can use them to find the
+  target; the hash is what the link points at.
+- Any other member is the publisher's (a label, a relation such as `"rel": "derivedFrom"`).
+- A link object is not searched for further links or asset references.
+- A server MUST refuse a record whose data has an object with a `$link` member that is not an
+  Underlay id, a `collection` that is not a collection id (Section 12), or a `type` or `id` that
+  is not a string of 1 to 1,024 characters.
+- A server MUST NOT refuse a link because of its target: it may be private, held elsewhere,
+  taken down, or never published. A link is a claim made by the record that holds it.
+
+Informative: because a link names its target by hash, following links always ends.
+
+### 5.3 Assets
+
+An asset is a byte string. Its id is hash(its bytes), and its size is its length.
+
+A record **attaches** an asset with an **asset reference**: an object, at any depth of its
+`data`, with a `$asset` member whose value is the asset's Underlay id.
+
+```
+{"cover": {"$asset": "ul:asset:<hex>", "fileName": "cover.png", "mediaType": "image/png"}}
+```
+
+- Any other member is the publisher's.
+- An asset reference is read as a link to its asset. It is not searched further.
+- A server MUST refuse a record whose data has an object with a `$asset` member that is not a
+  `ul:asset:` id, or with both `$link` and `$asset`.
+- A collection holds what its records attach. It says which assets it holds with `$asset` rows,
+  one per asset, whose `size` is the asset's length and whose `mediaType` is an RFC 6838 media
+  type of at most 255 characters, or `null`. A server that builds a commit from records adds a
+  `$asset` row for each attached asset the collection doesn't hold yet, and refuses the change
+  if that asset's bytes were never sent to the collection (7.4). A client that builds its own
+  commits SHOULD do the same.
+
+## 6. Sorted-record-file
+
+```
+[record block]… [key block]… [footer] [trailer]
+```
+
+Every block and the footer is one gzip member (RFC 1952). A reader MUST accept any valid gzip
+member. Nothing that is hashed depends on compressed bytes.
+
+### 6.1 Record blocks
+
+The file's lines (3.2), in order, each followed by `\n`, cut into blocks. A block closes after
+the first line that brings its uncompressed size to 262,144 bytes or more. The last block closes
+at the last line. A file with no lines has no record blocks.
+
+### 6.2 Entries
+
+Each line has one or more **entries**. An entry is a JSON array:
+
+```
+[kind, type, id, hash, size, block, offset]            in a file from an upload
+[kind, type, id, hash, size, block, offset, commit]    in a rebuilt file
+```
+
+- `kind` is `"r"` for a record line, `"x"` for a removal line, and `"w"` for a record whose
+  line is withheld (Section 11).
+- `hash` is the record hash, or `null` for a removal.
+- `size` is the line's size.
+- `block` is the number of the record block holding the line, from 0, and `offset` the byte
+  offset of the line within that block's uncompressed bytes. Both are `null` for `"w"`, which
+  has no line in the file.
+- `commit` is the number of the commit that wrote the row.
+
+A file is **labeled** if its entries carry `commit`, and **unlabeled** otherwise. All entries of
+a file are one or the other. `"w"` entries appear only in labeled files.
+
+Entries are in key order. In a labeled file, entries with the same key are in ascending `commit`
+order, and no two have the same `commit`. In an unlabeled file keys are unique.
+
+Lines are in the order of their first entry. In a labeled file, consecutive entries with the
+same key, the same `kind`, and the same `hash` (a row rewritten unchanged) share one line: they
+have the same `block`, `offset`, and `size`. No other entries share a line. This is a rule, not a
+choice, so that the entries alone decide the lines.
+
+A file holds at most 1,048,576 entries.
+
+### 6.3 Key blocks
+
+The entries, in order, cut into blocks of 1,024; the last block holds the rest. A key block's
+uncompressed bytes are its entries, each as JCS followed by `\n`.
+
+### 6.4 Footer
+
+The footer's uncompressed bytes are the JCS of:
+
+```
+{"content": {
+   "underlay": 3,
+   "labeled": boolean,
+   "entries": n, "lines": n, "records": n, "removals": n, "withheld": n,
+   "bytes": total uncompressed size of the record blocks,
+   "first": [type, id] | null, "last": [type, id] | null,
+   "commits": [lowest, highest] | null,
+   "keyBlocks": [[type, id, hash, entries], …]
+ },
+ "locator": {
+   "recordBlocks": [compressed length, …],
+   "keyBlocks": [compressed length, …]
+ }}
+```
+
+- `keyBlocks` lists, for each key block, the key of its first entry, the hash of its
+  uncompressed bytes, and its number of entries.
+- `records`, `removals`, and `withheld` count entries of each kind. `lines` counts lines.
+- `first` and `last` are the keys of the first and last entries, `null` in an empty file.
+- `commits` is the lowest and highest `commit` of a labeled file's entries, and `null` in an
+  unlabeled file.
+- The locator gives each block's compressed length in file order. Record blocks start at byte 0,
+  key blocks follow them, and the footer follows the key blocks.
+
+**File id** = hash(JCS(`content`)).
+
+### 6.5 Trailer
+
+The last 16 bytes of the file: the 8 bytes `55 4C 33 53 52 46 0A 00` (`UL3SRF\n\0`), then the
+footer's compressed length as an unsigned 64-bit big-endian integer.
+
+### 6.6 Determinism
+
+The same lines and entries give the same `content`, and so the same file id, whatever
+compressor, compression level, or write buffering is used. A writer has no choice that reaches
+`content`.
+
+### 6.7 Validity
+
+A file is valid if and only if:
+
+- the trailer and footer parse, and the footer is the JCS of an object with exactly these
+  members; it has at most 1,048,576 entries;
+- the footer, each key block, and each line is UTF-8, with no byte-order mark;
+- the file's length is what its footer accounts for: the blocks' stored lengths, the footer, and
+  the trailer;
+- a file with no entries has no blocks, and every count in its footer is zero;
+- each key block's uncompressed bytes hash to the listed hash and hold the listed number of
+  entries, its first entry has the listed key, and every key block but the last has 1,024
+  entries;
+- entries are in order (6.2), each is JCS, with a valid type and id (3.4);
+- each entry's line, read at (`block`, `offset`, `size`), is followed by `\n`; for `"r"` it
+  hashes to `hash` and is the record line of a record with the entry's id and type; for `"x"` it
+  is exactly the removal line for the entry's key; a `"w"` entry has no line;
+- lines fill each record block exactly, in entry order, shared as 6.2 says, and blocks are cut
+  as 6.1 says;
+- the counts, `bytes`, `first`, `last`, `commits`, and `labeled` match the entries.
+
+A reader that does not trust where a file came from MUST check what it reads: the footer against
+the file id, a key block against the footer, a line against its entry. It SHOULD bound what it
+reads before checking it, since a stored length says nothing of what a block inflates to.
+(Informative: the reference reader refuses a footer over 16 MiB stored or inflated, a record
+block that inflates past 262,144 bytes plus the largest record, and a key block past 8 MiB or
+with more than 1,024 lines.)
+
+## 7. Commit
+
+A commit is the JCS of:
+
+```
+{"underlay": 3,
+ "collection": collection id,
+ "number": n,                       1 for the first commit
+ "previous": hex | null,            the version id of commit n − 1
+ "semver": "v1.0.0",
+ "createdAt": time,
+ "changes": [{"collection": collection id,
+              "files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
+              "base": hex | null,
+              "message": string | null,
+              "keyId": string | null, "sig": string | null}, …],
+ "keyId": string | null, "sig": string | null}
+```
+
+A commit has two parts. A **change** is what an author sent: the files of one upload, the version
+they were working from, and a message. The rest is added when the change lands: its number, the
+commit before it, the semver, and the time. Either the authority builds the commit around a
+change it was sent, or the author builds the whole commit and the authority stores it unchanged
+(Section 8). A commit is the same object either way.
+
+- **Version id** = hash(the commit's bytes). As an Underlay id it is `ul:ver:` and that hex; in
+  `previous` and `base` it is the bare hex.
+- The files a commit names MUST be unlabeled. A server MUST refuse a change that names a labeled
+  file. Within one commit their key ranges MUST NOT overlap. Every row in them counts as written
+  by this commit.
+- Version ids and signatures rest on commits, and through them on the unlabeled files commits
+  name, and on nothing else. None rests on a labeled file or a layout file, so how those are
+  written can change at the cost of a rebuild.
+- A commit with number `n` exists only once. A writer creates it only if no commit `n` exists,
+  and only if commit `n − 1` exists and hashes to `previous`.
+- In a file entry, `first` and `last` are the file's first and last keys, `entries`, `records`,
+  and `removals` its counts, and `bytes` its footer's `bytes`. With them the commit's rows can be
+  cut into the same files again (Section 11).
+- A commit, each change, and each file entry has exactly the members shown. A writer MUST NOT
+  write a commit a reader would refuse: nothing can follow a commit that cannot be read.
+- A change's `collection` is the commit's.
+- `changes` is a list so that one commit can later carry several authors' uploads. A writer
+  today makes one change per commit.
+- A commit's `createdAt` is no earlier than that of the commit before it.
+
+### 7.1 Base
+
+`base` is the version the author was working from when they prepared the upload, or `null`. The
+author sets it; the authority sets `previous`. The two are equal unless another commit landed in
+between.
+
+- The authority records `base` as given. It MUST refuse a base that is not the version id of an
+  earlier commit in this collection's log (which, for a fork, includes the commits it copied).
+- Nothing else depends on it. A commit is never refused because of its base, and reading is
+  unchanged: the newest entry wins (Section 10).
+- What it gives: for any commit, the keys it wrote that other commits changed after its base and
+  up to its `previous` can be listed from key entries alone. Those are the changes the author had
+  not seen.
+
+### 7.2 Signatures
+
+A commit, a change, and a receipt (8.2) are each signed the same way, or not at all:
+
+- `sig` is the Ed25519 signature (RFC 8032) over the UTF-8 bytes of JCS(the object without its
+  `sig` member), in base64url.
+- `keyId` is the first 16 hex characters of hash(the raw 32-byte public key).
+- `keyId` and `sig` are both `null`, or neither is.
+
+What each signature covers:
+
+- **The author signs the change:** its `collection`, `files`, `base`, `message`, and `keyId`,
+  not the commit's `number` or `previous`. A change that loses the race for a number is
+  committed at the next free number with the author's signature unchanged; only the commit
+  around it is made again.
+- **The authority signs a commit it builds:** every member but its own `sig`, the changes and
+  their signatures included. A commit its author built carries the author's key and signature,
+  or none; the authority's word is its receipt.
+
+A reader finds public keys in the collection description (Section 12). Which keys a reader
+trusts is not part of this protocol (Section 14).
+
+### 7.3 Semver
+
+A commit's semver is `v<major>.<minor>.<patch>`, decided by what it changes relative to the
+version before it, with M, m, p that version's:
+
+1. The first commit is `v1.0.0`.
+2. If it adds, removes, or changes a `$schema` row: `v(M+1).0.0`.
+3. Otherwise, if it adds, removes, or changes a row of a publisher's type: `vM.(m+1).0`.
+4. Otherwise (only `$asset` or `$meta` rows): `vM.m.(p+1)`.
+
+A `$schema` row equal to the row it would replace (same key, same hash; or a removal of an absent
+key) is not a change, so a committer always compares schema rows with the version before. For
+other rows a committer MAY make the same comparison, and otherwise counts every row as a change.
+A commit that changes nothing SHOULD NOT be made.
+
+### 7.4 Naming a file or an asset
+
+A server MUST NOT accept a change that names a file unless the file's bytes came with that upload
+and check out against the file id (6.7). That a file with the id is already stored is never
+enough: otherwise knowing an id would be a way to test whether a file exists, and then to read it
+through a collection of one's own. The one exception is a fork, which begins as a copy of the
+commits of a collection the caller may read (Section 12).
+
+The same holds for an asset. A `$asset` row that adds an asset to a collection is accepted only if
+the asset's bytes were sent to that collection, or one of its versions already names it, and only
+if its `size` is their length. The bytes a server checks MUST be the bytes it installs: an
+uploader who can still write where its upload was sent must not be able to change a file between
+the check and the install.
+
+## 8. Authority, receipts, and following a collection
+
+### 8.1 Authority
+
+Each collection names one **authority**: the server that accepts its commits, and so settles their
+numbers. It is `authority` in the collection description (Section 12), a server's address
+(`underlay.org`, `localhost:4417`); without it, the server that holds the collection is its
+authority. Another server holding the collection (a mirror, a copy) takes only commits the
+authority has accepted, with their receipts, and never numbers anything.
+
+An author MAY build the whole commit: it names the version it follows as `previous`, so its
+number is one more than that version's, and its semver follows from 7.3. Its version id is the
+same on the author's machine and on every server that later holds it. The authority:
+
+- MUST store the commit's bytes unchanged, created only if absent, when its `number` is one more
+  than its newest commit's and its `previous` is that commit's version id;
+- MUST refuse it when it follows another version, and answer with its newest version (number,
+  version id, semver), so the author can build its commits again on that one;
+- MUST check what it checks of any change: that each file named came with the upload and checks
+  out (7.4), that the records satisfy the schemas (Section 4), that the semver is what the
+  commit's rows call for (7.3), and that a `base` is a version of this collection (7.1);
+- SHOULD refuse a `createdAt` far from when the commit was sent (the reference server allows ten
+  minutes either way), and one before the `createdAt` of the commit it follows.
+
+A commit the authority already holds as its newest (the same bytes: a request sent again, or a
+landing that stopped after storing it) is accepted, not refused: the authority finishes what was
+left undone and answers as for a commit it has just stored.
+
+**Replaying.** An author whose commit was refused builds it again on the newest version: the
+change stays as it was, except a `base` that named one of the commits being replayed, which names
+its replayed version id; the number, `previous`, semver, and time are made again, so the version
+id changes. A commit already accepted is never replayed.
+
+### 8.2 Receipts
+
+When the authority accepts a commit, whoever built it, it writes a **receipt** beside it, created
+only if absent:
+
+```
+{"underlay": 3, "collection": collection id, "number": n, "version": hex,
+ "receivedAt": time, "server": the authority's address,
+ "keyId": string | null, "sig": string | null}
+```
+
+signed as in 7.2. `version` is the commit's version id. A receipt is not hashed into anything: a
+version id never depends on the server that holds it. A reader that checks signatures accepts a
+commit signed by a key it trusts, or a commit whose receipt is.
+
+A receipt goes where its commit goes. A fork copies the receipts of the commits it copies, and a
+mirror those of the commits it takes; the receipt still names the collection its commit was made
+for, as the commit does.
+
+### 8.3 Following a collection over HTTP
+
+Under a collection's URL, a server serves:
+
+- `GET …/commits?after=<n>&limit=<k>`: the commits after `n` in order, each as
+  `{"number", "id", "commit": its exact text, "receipt": receipt | null}`, with `head` (the
+  newest number), `more`, and `collection` (`id` and `authority`). A page may hold fewer commits
+  than `limit`, but at least one while there are any; a client goes on from the last number it
+  was given while `more` is true;
+- `GET …/commits/<n>`: one commit in the same form;
+- `GET …/layout`: `{"layout": the current layout file | null}`;
+- `GET …/record-files/<file id>`: a sorted-record-file's bytes, with byte ranges, for a file the
+  current layout or a commit after its `through` names, and no other. A server that withholds a
+  record refuses the whole file that holds it (status 451): a file cannot be served with a row
+  left out, since its id is the hash of its content.
+
+A client follows the log with the first, and reads any version it keeps by fetching the current
+layout and the files it and later commits name.
+
+## 9. Layout file
+
+The JCS of:
+
+```
+{"underlay": 3, "collection": collection id, "number": n, "through": commit number,
+ "createdAt": time,
+ "files": [{"id", "labeled", "first", "last", "commits": [lowest, highest],
+            "entries", "records", "removals", "bytes"}, …]}
+```
+
+- The files together hold every row written by commits 1 to `through` that some retained version
+  can see. Which versions are retained is the server's choice. A layout that no longer holds every
+  version says which it holds in `retained`: a list of `[lowest, highest]` ranges of commit
+  numbers, in order. Without it every version is retained.
+- A labeled file's `commits` is its footer's. An unlabeled file in a layout has `commits`
+  `[c, c]`: all its rows count as written by `c`.
+- A layout MAY carry other members for the server's own use, on itself or on a file. A reader
+  ignores those it does not know. A reader MUST refuse a layout whose `underlay` it does not know.
+- A layout with number `n` exists only once, and is created only if absent. The layout with the
+  highest number is current. Each layout is complete; earlier ones are not needed.
+
+## 10. Reading a version
+
+To read version `v` (the version whose last commit is number `v`):
+
+1. Let `L` be the current layout, or none. The files are `L`'s files, plus the files named by
+   commits `L.through + 1` to `v` (all commits 1 to `v` if there is no layout).
+2. For a key, among the entries of those files whose commit is at most `v` (an unlabeled file's
+   rows count as written by the commit that named it), the entry with the highest commit wins.
+   If it is a removal, or there is none, the version has no record with that key. If it is
+   withheld, the version has a record with that key and hash whose line the server no longer
+   holds. Otherwise the record is the entry's line.
+
+If `v` is at or below `L.through` and `L` does not retain it, the read fails.
+
+The changes between versions `a` and `b` (`a` < `b`) are the keys with an entry whose commit is
+above `a` and at most `b`. A file whose `commits` range lies outside that need not be read.
+
+## 11. Rebuild
+
+A rebuild takes files the current layout or later commits name, writes labeled files that hold
+their rows, and creates the next layout. A layout MAY also list a commit's files as they are. A
+rebuild MUST preserve every retained version: each reads the same before and after.
+
+- **Thinning.** An entry with commit `c` is seen by versions `c` up to, but not including, the
+  commit of the next entry for its key. A rebuild MAY drop an entry that no retained version
+  sees. It MAY drop a removal that would then be the oldest entry for its key only if the
+  removal's commit is before the oldest retained version, and no file it leaves out can hold an
+  older entry for that key.
+- **Takedown.** A rebuild MAY replace a record entry by a `"w"` entry with the same hash, size,
+  and commit, and leave out its line. Every file holding the row has to be rebuilt for the bytes
+  to be gone.
+
+Because of 6.6, the files a commit named can be made again from rebuilt files that still hold all
+of the commit's rows: take the entries labeled with its number, in key order, drop the labels,
+cut them at the `first` keys the commit recorded, and write each part by Section 6. The results
+have the ids the commit recorded. A commit with a row that was thinned or withheld cannot be made
+again in full.
+
+## 12. Collection
+
+A **collection id** is 1 to 128 characters from `A`–`Z`, `a`–`z`, `0`–`9`, `.`, `_`, and `-`,
+beginning with a letter or digit.
+
+A collection is:
+
+- a **description**: a JSON object with at least
+  - `id`;
+  - `createdAt`;
+  - `authority` (8.1), if it is not the server that holds it;
+  - `public`: whether anyone may read it. A collection is wholly public or private;
+  - `keys`: the public keys that signed its commits, changes, and receipts, each
+    `{"keyId", "alg": "Ed25519", "publicKey": raw key in base64url}`. A reader MUST use a key
+    only under the `keyId` derived from it;
+  - for a fork, `forkedFrom` (the collection id, commit number, and version id it began from)
+    and `lineage`: the collections whose ids its earlier commits carry, oldest first, each as
+    `[collection id, the last commit number that carries it]`.
+
+  A description is not hashed or signed. A reader MUST ignore members it does not know;
+
+- its commits, numbered from 1 with no gaps, each with its receipt;
+- its layouts;
+- the sorted-record-files and assets those name.
+
+A collection names files and assets by id only, and never refers to another collection's commits
+or layouts. A fork begins as a copy of another collection's commits up to the fork point, and of
+its current layout; those commits carry the ids of the collections they were made in and are
+valid under `lineage`. The fork point is at or after the copied layout's `through`.
+
+## 13. Limits and constants
+
+| Name                 | Value                                       | Section |
+| -------------------- | ------------------------------------------- | ------- |
+| Protocol version     | 3                                           | all     |
+| Largest safe integer | 9,007,199,254,740,991                       | 3.1     |
+| Depth of `data`      | 64                                          | 3.1     |
+| Record line          | 8,388,608 bytes (8 MiB)                     | 3.1     |
+| Id                   | 1 to 1,024 bytes                            | 3.4     |
+| Type                 | 1 to 128 bytes                              | 3.4     |
+| Schema               | 262,144 bytes (256 KiB)                     | 4.1     |
+| Pattern              | 256 UTF-16 code units                       | 4.1     |
+| Record block         | 262,144 bytes                               | 6.1     |
+| Key block            | 1,024 entries                               | 6.3     |
+| Entries in a file    | 1,048,576                                   | 6.2     |
+| Trailer              | `UL3SRF\n\0`, then a u64 big-endian; 16 bytes | 6.5   |
+| Underlay id kinds    | `rec`, `asset`, `ver`                       | 5.1     |
+| Collection id        | 1 to 128 characters                         | 12      |
+
+The reference implementation defines these in `packages/protocol/src/constants.ts` and
+`packages/protocol/src/v3/constants.ts`, and the test vectors repeat them.
+
+## 14. Security considerations
+
+- **Content by hash.** A server MUST NOT serve a file, record, or asset by hash alone, only where
+  a collection the caller may read names it (8.3). Otherwise a small private object with
+  guessable content could be confirmed by computing its hash. For the same reason a server MUST
+  NOT count content it holds for other collections as sent in an upload (7.4).
+- **Existence.** A server answers 404, not 403, for content a caller may not read, so that a
+  response does not confirm the content exists.
+- **Split views.** A version id proves a version's content, not that a server shows every reader
+  the same versions. The hash chain of `previous`, and signatures, make omission and reordering
+  detectable by readers who compare what they were served.
+- **Key trust (open).** This protocol does not say how a reader comes to trust a key. A reader
+  that trusts the keys in a description served by an untrusted server can be shown a forged
+  history on first contact. Informative: the reference client trusts the keys it is first served
+  and anchors on the last commit it has checked.
+- **Copies.** A storage location enforces nothing: whoever can read it can read everything in
+  it. A server MUST apply `public` itself, and a location holding a private collection MUST NOT
+  be publicly readable.
+- **Asset serving.** Asset bytes SHOULD be served from an origin apart from the server's own
+  pages, with `Content-Disposition: attachment`, so an uploaded HTML or SVG file cannot run in
+  the server's origin.
+- **Bounded reads.** See 6.7: stored lengths say nothing of what data inflates to.
+
+## Appendix A. Reading a collection by hand (informative)
+
+Everything above serves storage at scale. To read a collection with no Underlay software:
+
+1. **Find a version's records.** Take the commits in number order, up to the version wanted. For
+   each, open the files it names: `gzip -dc` prints a file's lines, then its key blocks (lines
+   beginning `["`), then its footer (one line beginning `{"content"`), and warns of the 16-byte
+   trailer as trailing garbage. Every line beginning `{"id":` is a record line or a removal
+   line. A removal deletes the record with its key; a later line for a key replaces an earlier
+   one. That is the version.
+2. **Check a record.** `printf '%s' "<line>" | sha256sum` gives its `ul:rec:` id.
+3. **Check a version.** `sha256sum` of a commit's stored bytes gives its version id; its
+   `previous` is the version id of the commit before.
+4. **Check an asset.** `sha256sum` of its bytes is its `ul:asset:` id.
+
+Where a server has rebuilt a collection, the current layout lists labeled files holding the rows
+of many commits; each entry says which commit wrote it (6.2), and step 1 still holds.
+
+In Python, with only the standard library, for a collection never rebuilt (`commits` are the
+parsed commits in number order; `path(file_id)` is where a file's bytes are):
+
+```python
+import gzip, json
+
+def lines(file_path):
+    with gzip.open(file_path, "rt", encoding="utf-8") as f:
+        try:
+            for line in f:
+                if not line.startswith('{"id":'):
+                    return                    # key blocks begin; the records are done
+                yield line.rstrip("\n")
+        except gzip.BadGzipFile:              # the 16-byte trailer
+            return
+
+def read_version(commits, v, path):
+    rows = {}
+    for commit in commits[:v]:
+        for change in commit["changes"]:
+            for f in change["files"]:
+                for line in lines(path(f["id"])):
+                    o = json.loads(line)
+                    key = (o["type"], o["id"])
+                    if o.get("removed") is True:
+                        rows.pop(key, None)
+                    else:
+                        rows[key] = o
+    return rows
+```
+
+## Appendix B. Test vectors
+
+In `packages/protocol/test/vectors/`:
+
+- `v2.json`: JCS input and output pairs; input-rule verdicts per line, covering every code, the
+  depth limit at its boundary, and the order of codes; schema acceptance verdicts; record and
+  schema hashes; key order; one signed object with the key seed that signed it.
+- `v3-files.json`: sorted-record-files, labeled and unlabeled, with their bytes and file ids.
+- `v3-commits.json`: commits, signed, with their version ids.
+- `v3-links.json`: links and asset references, accepted and refused.
+
+`packages/protocol/scripts/gen-vectors.ts --check` and `gen-vectors-v3.ts --check` regenerate
+them and fail on any difference. Ed25519 signatures are deterministic, so signed vectors are
+reproducible.
+
+## Appendix C. The reference server's storage (informative)
+
+```
+uploads/<session>/<file id>       an upload's files, until its commit checks and installs them
+records/<file id>                 sorted-record-files, shared by every collection naming them
+assets/<sha256>                   assets, shared the same way
+collections/<id>/collection.json  the description
+collections/<id>/commits/<number, 16 digits>.json
+collections/<id>/commits/<number, 16 digits>.receipt.json
+collections/<id>/layouts/<number, 16 digits>.json
+collections/<id>/latest.json          a hint to the newest commit, may be stale
+collections/<id>/latest-layout.json   a hint to the newest layout, may be stale
+tmp/                              files being written, before their id is known
+trash/records/, trash/assets/     objects the sweep removed, kept for a while
+sweep/                            the sweep's own state
+```
+
+- Commits and layouts are created with a put that fails if the key exists. Nothing else decides a
+  race.
+- The server lands a collection's commits one at a time, each against the head it was prepared
+  for. A change whose head has moved is prepared again.
+- The server keeps no authors' keys: it records who pushed in its own catalog, and signs the
+  commit. It refuses a change sent signed, since it could not check the signature.
+- Old layout files are deleted; the server keeps the two newest.
+- A file and an asset are each stored once, however many collections name them.
+- Limits: a commit names at most 10,000 files, each at most 4 GiB.
+- **Where files are cut.** The reference client cuts an upload, and a rebuild its output, by one
+  rule: a file ends after a key picked by a hash of the key against its row's size, toward 512 MiB
+  of lines a file; at four times that, or 524,288 entries (262,144 in a rebuild); and where the
+  type changes once the file holds 16 MiB. So the same rows give the same files, with the same
+  ids, on any machine. The protocol says nothing of where files are cut, and a server accepts any
+  cut.
+- **Rebuild policy.** Files are grouped by the merge that wrote them; groups in size tiers a
+  factor of 10 apart (the lowest up to 8 MiB) are merged when 10 or more neighbors are at or
+  below a tier. A layout is written at least every 8 commits.
+- **Sweep.** A file is kept while a current layout, or a commit after its `through`, names it,
+  and an asset while a `$asset` entry in a kept file names it. Anything else is condemned, moved
+  to `trash/` after a day, and deleted after seven more.
+
+## Appendix D. History (informative)
+
+**Version 2** (frozen 2026-10-03) stored a version as a tree of records with a signed version
+log. Its document is kept in the repository as history (`protocol-v2.md`) and is not needed to
+read version 3 data. The reference server moved its collections to version 3 on 2026-11-13.
+
+Version 3 drafts used other spellings before this document. They are not part of the protocol:
+`ulv3:<hex>` for a version id (in `previous` and `base`, and in receipts); `sha256:<hex>` for an
+asset id; `{"$file": "sha256:<hex>"}` for an asset reference; and `ulv2:<hex>` for a version 2
+version hash. **Pending:** the reference server rewrites the data that holds them before this
+document is final, so that no stored object uses them.
+
+Changes from `protocol-v3.md` (2026-11-22), changing no hash or accepted input except where
+said:
+
+1. Everything version 3 took from version 2 is stated here: canonical JSON, input rules, key
+   order, types and ids, schemas, semver, signatures, limits, and security.
+2. The older spellings above are no longer read.
+3. The collection description lists `public` and `keys`.
+4. `bad_type` is reported before `bad_id`, as the reference implementation does.
