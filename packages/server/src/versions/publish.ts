@@ -145,6 +145,7 @@ export async function publishVersion(
           pushSessionId: lit<string | null>(v.pushSessionId ?? null).as('push_session_id'),
           assetBytes: lit<number | null>(null).as('asset_bytes'),
           v2Hash: lit<string | null>(null).as('v2_hash'),
+          formerHash: lit<string | null>(null).as('former_hash'),
         })
         .from(schema.collections)
         .where(and(headIsBase, fenceHolds(p.fence))) as never,

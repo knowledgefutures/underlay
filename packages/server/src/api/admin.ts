@@ -32,6 +32,8 @@ import { chunks } from '../db/chunks.js'
 import * as schema from '../db/schema.js'
 import { forgetDenylist } from '../lib/limits.js'
 import { requestConversion, revertToV2 } from '../v3/convert.js'
+import { commitsOf } from '../v3/queue.js'
+import { keepRewriteOutcome, queueRewrites, rewriteOutcomes } from '../v3/rewrite.js'
 import { jsonError } from './access.js'
 
 /** The signed-in person (session or unscoped key), as v1's requireAuth + requireUnscopedKey. */
@@ -300,6 +302,34 @@ export function adminRoutes() {
     const refused = await revertToV2(c.var.ports, col.id)
     if (refused) return jsonError(c, 409, refused)
     return c.json({ ok: true })
+  })
+
+  // The rewrite into the protocol's one spelling (v3/rewrite.ts): one collection now, or every
+  // v3 collection queued; `dryRun` says what would change. Outcomes are kept per collection.
+  app.post('/api/admin/v3/rewrite', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    const b = (await c.req.json().catch(() => null)) as {
+      collection?: unknown
+      all?: unknown
+      dryRun?: unknown
+    } | null
+    const dryRun = b?.dryRun === true
+    if (b?.all === true) {
+      const queued = await queueRewrites(c.var.ports, { dryRun })
+      return c.json({ ok: true, queued }, 202)
+    }
+    const col = await collectionBySlugs(c, b?.collection)
+    if (!col) return jsonError(c, 404, 'Collection not found (send {"collection": "owner/slug"})')
+    const outcome = await commitsOf(c.var.ports).rewrite(c.var.ports, col.id, { dryRun })
+    await keepRewriteOutcome(c.var.ports, outcome)
+    return c.json(outcome)
+  })
+
+  app.get('/api/admin/v3/rewrite', async (c) => {
+    const denied = await stewardOnly(c)
+    if (denied) return denied
+    return c.json({ outcomes: await rewriteOutcomes(c.var.ports) })
   })
 
   app.post('/api/admin/fsck', async (c) => {

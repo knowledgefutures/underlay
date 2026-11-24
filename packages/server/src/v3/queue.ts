@@ -13,9 +13,12 @@
  */
 import type { Ports } from '../ports.js'
 import { type Landed, landCommit, type Landing } from './landing.js'
+import { type RewriteOutcome, rewriteV3 } from './rewrite.js'
 
 export interface CommitQueue {
   land(ports: Ports, landing: Landing): Promise<Landed>
+  /** Rewrite a collection into the protocol's one spelling, with no commit landing meanwhile. */
+  rewrite(ports: Ports, collectionId: string, opts: { dryRun?: boolean }): Promise<RewriteOutcome>
 }
 
 /** Run work for a key one at a time, in this process. */
@@ -37,7 +40,10 @@ export function serially() {
 /** One at a time per collection, in this process. */
 export function localQueue(): CommitQueue {
   const run = serially()
-  return { land: (ports, l) => run(l.collectionId, () => landCommit(ports, l)) }
+  return {
+    land: (ports, l) => run(l.collectionId, () => landCommit(ports, l)),
+    rewrite: (ports, id, opts) => run(id, () => rewriteV3(ports, id, opts)),
+  }
 }
 
 /** A Durable Object namespace, as far as the queue uses it. */
@@ -57,6 +63,18 @@ export function durableQueue(ns: CommitsNamespace): CommitQueue {
       if (!res.ok)
         throw new Error(`Commit queue for ${l.collectionId}: ${res.status} ${await res.text()}`)
       return (await res.json()) as Landed
+    },
+    async rewrite(_ports, collectionId, opts) {
+      const stub = ns.get(ns.idFromName(collectionId))
+      const res = await stub.fetch(
+        new Request('https://commits/rewrite', {
+          method: 'POST',
+          body: JSON.stringify({ collectionId, ...opts }),
+        }),
+      )
+      if (!res.ok)
+        throw new Error(`Commit queue for ${collectionId}: ${res.status} ${await res.text()}`)
+      return (await res.json()) as RewriteOutcome
     },
   }
 }

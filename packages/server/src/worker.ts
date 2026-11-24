@@ -35,6 +35,7 @@ import {
 import { createStores, newCollectionsFrom } from './stores.js'
 import { landCommit, type Landing } from './v3/landing.js'
 import { type CommitsNamespace, durableQueue, serially } from './v3/queue.js'
+import { rewriteV3 } from './v3/rewrite.js'
 
 export interface Env {
   /** 'bulk' in the bulk job Worker (wrangler.bulk.jsonc). */
@@ -397,13 +398,20 @@ export class CollectionCommits {
   ) {}
 
   async fetch(req: Request): Promise<Response> {
-    const landing = (await req.json()) as Landing
     const ctx = {
       waitUntil: (p: Promise<unknown>) => this.state.waitUntil(p),
       passThroughOnException() {},
     } as unknown as ExecutionContext
     // Landing never goes back through the queue, so these ports' own `commits` is unused.
     const ports = makePorts(this.env, ctx)
+    if (new URL(req.url).pathname === '/rewrite') {
+      const r = (await req.json()) as { collectionId: string; dryRun?: boolean }
+      const outcome = await this.#run(r.collectionId, () =>
+        rewriteV3(ports, r.collectionId, { dryRun: r.dryRun === true }),
+      )
+      return Response.json(outcome)
+    }
+    const landing = (await req.json()) as Landing
     const landed = await this.#run(landing.collectionId, () => landCommit(ports, landing))
     return Response.json(landed)
   }

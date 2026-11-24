@@ -57,6 +57,8 @@ export async function findVersion(
       eq(schema.versions.collectionId, collectionId),
       or(
         inArray(schema.versions.hash, [`ul:ver:${h}`, `ulv3:${h}`, `ulv2:${h}`]),
+        // Its id before the rewrite into the protocol's one spelling (v3/rewrite.ts).
+        eq(schema.versions.formerHash, `ul:ver:${h}`),
         ...(id.form === 'hex' ? [eq(schema.versions.v2Hash, `ulv2:${h}`)] : []),
       ),
     )

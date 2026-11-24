@@ -6,8 +6,10 @@
  * where it is the authority (`landCommit` asks, so every way a commit lands is covered), and
  * writes a receipt beside each commit it accepts.
  */
-import { v3 } from '@underlay/protocol'
+import { jcs, v3 } from '@underlay/protocol'
+import { eq } from 'drizzle-orm'
 
+import * as schema from '../db/schema.js'
 import type { Ports } from '../ports.js'
 
 /** The authority a description names, or this server. */
@@ -32,6 +34,37 @@ export async function ensureCollection(store: Ports['stores']['v3'], id: string)
     // Another commit wrote it first.
     if (!(err instanceof v3.CollectionError)) throw err
   }
+}
+
+/**
+ * Bring a collection's description up to what the protocol asks of it (docs/protocol.md,
+ * Section 12): whether it is `public`, and the `keys` that sign its commits and receipts, so
+ * a copy of the bucket can be checked without this server. Written only when it changes.
+ */
+export async function syncDescription(ports: Ports, collectionId: string): Promise<void> {
+  const store = ports.stores.v3
+  await ensureCollection(store, collectionId)
+  const description = await v3.readDescription(store, collectionId)
+  if (!description) return
+  const [row] = await ports.db
+    .select({ public: schema.collections.public })
+    .from(schema.collections)
+    .where(eq(schema.collections.id, collectionId))
+  if (!row) return
+  const signer = await ports.signer()
+  const key = {
+    keyId: signer.keyId,
+    alg: 'Ed25519',
+    publicKey: signer.publicKey.publicKey,
+  }
+  const keys = Array.isArray(description.keys)
+    ? (description.keys as { keyId: string }[]).filter((k) => k.keyId !== key.keyId)
+    : []
+  const next = { ...description, public: row.public, keys: [...keys, key] }
+  if (jcs(next) === jcs(description)) return
+  await store.put(v3.descriptionKey(collectionId), jcs(next), {
+    contentType: 'application/json',
+  })
 }
 
 /** What a client is told when it sends a version to a server that is not the authority. */

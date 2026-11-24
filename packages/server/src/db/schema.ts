@@ -416,10 +416,17 @@ export const versions = sqliteTable(
      * resolves (v3-deploy-plan.md, decision 2). Null otherwise.
      */
     v2Hash: text('v2_hash'),
+    /**
+     * Its `ul:ver:` id before the 2026-11 rewrite into the protocol's one spelling
+     * (v3/rewrite.ts), which the read API still resolves. Null for a version the rewrite
+     * left as it was.
+     */
+    formerHash: text('former_hash'),
   },
   (t) => [
     uniqueIndex('versions_collection_seq_uq').on(t.collectionId, t.seq),
     index('versions_v2_hash_idx').on(t.v2Hash),
+    index('versions_former_hash_idx').on(t.formerHash),
     uniqueIndex('versions_collection_semver_uq').on(t.collectionId, t.semver),
     index('versions_hash_idx').on(t.hash),
     index('versions_published_idx').on(t.publishedAt),
