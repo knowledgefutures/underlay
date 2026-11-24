@@ -221,7 +221,7 @@ describe('v1 → v2 migration', () => {
       const latest = await json('/api/collections/org/lib/versions/latest', 'u1')
       expect(latest.metadata).toEqual({ title: 'Lib', readme: 'hi' })
       // The file kept its v1 storage key and is downloadable.
-      const file = await h.request(`/api/collections/org/lib/files/${FILE}`)
+      const file = await h.request(`/api/collections/org/lib/assets/${FILE}`)
       expect(file.status).toBe(302)
       expect(file.headers.get('location')).toContain('files/ff/ff/legacy')
       // Provenance by b's v2 hash (members only now); its v1 hash is gone.
