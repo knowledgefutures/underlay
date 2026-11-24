@@ -870,8 +870,10 @@ read version 3 data. The reference server moved its collections to version 3 on 
 Version 3 drafts used other spellings before this document. They are not part of the protocol:
 `ulv3:<hex>` for a version id (in `previous` and `base`, and in receipts); `sha256:<hex>` for an
 asset id; `{"$file": "sha256:<hex>"}` for an asset reference; and `ulv2:<hex>` for a version 2
-version hash. **Pending:** the reference server rewrites the data that holds them before this
-document is final, so that no stored object uses them.
+version hash. On 2026-11-24 the reference server rewrote every collection that held them
+(`ulv3:` ids as bare hex; `$file` references, and schemas naming `$file`, as `$asset`), so no
+object it stores uses them. A rewritten version has a new id; the server still resolves the
+old one, outside this protocol.
 
 Changes from `protocol-v3.md` (2026-11-22), changing no hash or accepted input except where
 said:
