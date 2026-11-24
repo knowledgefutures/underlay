@@ -28,6 +28,8 @@ export interface RewriteOutcome {
   /** Commits whose id changed. */
   rewritten?: number
   records?: number
+  /** Schemas whose `$file` properties became `$asset`. */
+  schemas?: number
   files?: number
   layout?: number | null
   dryRun?: boolean
@@ -61,6 +63,7 @@ export async function rewriteV3(
     collectionId,
     rewritten: changed.length,
     records: plan.records,
+    schemas: plan.schemas.length,
     files: plan.files,
     layout: plan.layout,
     ...(opts.dryRun ? { dryRun: true } : {}),
@@ -73,6 +76,31 @@ export async function rewriteV3(
       .update(schema.versions)
       .set({ hash: `ul:ver:${c.after}`, formerHash: `ul:ver:${c.before}` })
       .where(and(eq(schema.versions.collectionId, collectionId), eq(schema.versions.seq, c.number)))
+  }
+  // A schema written for `$file` has a new hash: the collection uses it now, and its labels
+  // carry over to it.
+  for (const s of plan.schemas) {
+    await ports.db.insert(schema.schemas).values({ hash: s.after }).onConflictDoNothing()
+    await ports.db
+      .update(schema.schemaUsage)
+      .set({ schemaHash: s.after })
+      .where(
+        and(
+          eq(schema.schemaUsage.collectionId, collectionId),
+          eq(schema.schemaUsage.typeSlug, s.type),
+          eq(schema.schemaUsage.schemaHash, s.before),
+        ),
+      )
+    const labels = await ports.db
+      .select({ label: schema.schemaLabels.label })
+      .from(schema.schemaLabels)
+      .where(eq(schema.schemaLabels.schemaHash, s.before))
+    for (const l of labels) {
+      await ports.db
+        .insert(schema.schemaLabels)
+        .values({ schemaHash: s.after, label: l.label })
+        .onConflictDoNothing()
+    }
   }
   await syncDescription(ports, collectionId)
   return outcome

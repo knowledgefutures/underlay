@@ -195,17 +195,64 @@ describe('rewrite', () => {
     await v3.verifyLog(store, 'c', { serverKeys: [signer.publicKey] })
   })
 
-  it('refuses a conversion its schema would reject, and writes nothing', async () => {
+  it('converts a schema that names $file, as PubPub schemas do, with its records', async () => {
     const store = memoryStore()
     const signer = await ed25519Signer(seed)
-    const strict = {
+    const pubpub = {
       type: 'object',
       properties: {
         cover: {
           type: 'object',
-          properties: { $file: { type: 'string' } },
+          properties: {
+            $file: { type: 'string', pattern: '^sha256:' },
+            fileName: { type: 'string' },
+          },
           required: ['$file'],
         },
+      },
+    }
+    await commitRows(
+      store,
+      [
+        rec('$asset', H(1), { size: 1, mediaType: null }),
+        rec('$schema', 'T', pubpub),
+        rec('T', 'a', { cover: { $file: `sha256:${H(1)}`, fileName: 'a.png' } }),
+      ],
+      signer,
+    )
+    await commitRows(store, [rec('T', 'b', { cover: { $file: `sha256:${H(1)}` } })], signer)
+    const plan = await v3.rewriteCollection(store, 'c', { signer })
+    expect(plan.records).toBe(2)
+    expect(plan.schemas).toHaveLength(1)
+    const view = await v3.openView(store, 'c')
+    const schema = await v3.getRecord(store, view, '$schema', 'T')
+    const body = (JSON.parse(dec.decode(schema!.line!)) as { data: unknown }).data
+    expect(body).toEqual({
+      type: 'object',
+      properties: {
+        cover: {
+          type: 'object',
+          properties: {
+            $asset: { type: 'string', pattern: '^ul:asset:' },
+            fileName: { type: 'string' },
+          },
+          required: ['$asset'],
+        },
+      },
+    })
+    expect(plan.schemas[0]!.after).toBe(sha256Hex(jcs(body)))
+    expect(plan.schemas[0]!.before).toBe(sha256Hex(jcs(pubpub)))
+    await v3.verifyLog(store, 'c', { serverKeys: [signer.publicKey], files: true })
+  })
+
+  it('refuses a conversion its schema would reject, and writes nothing', async () => {
+    const store = memoryStore()
+    const signer = await ed25519Signer(seed)
+    // Takes members beginning `$f` only: `$file`, not `$asset`.
+    const strict = {
+      type: 'object',
+      properties: {
+        cover: { type: 'object', patternProperties: { '^\\$f': {} }, additionalProperties: false },
       },
     }
     await commitRows(

@@ -67,6 +67,8 @@ export interface RewritePlan {
   commits: { number: number; before: string; after: string }[]
   /** Records whose data had `$file` references, over all commits. */
   records: number
+  /** Schemas whose `$file` properties became `$asset`: each type's schema hash before and after. */
+  schemas: { type: string; before: string; after: string }[]
   /** Files written again because a row in them changed. */
   files: number
   /** The layout written, when files changed. */
@@ -148,6 +150,82 @@ export function convertFileRefs(data: unknown): { data: unknown; count: number }
   }
   const data2 = walk(data)
   return { data: data2, count }
+}
+
+/**
+ * Convert a schema written for `$file` references to one for asset references: a `$file`
+ * property becomes `$asset` (a `^sha256:` pattern on it becomes `^ul:asset:`), and `$file` in
+ * `required` becomes `$asset`. The value itself when there is nothing to convert.
+ */
+export function convertSchemaRefs(schema: unknown): { schema: unknown; count: number } {
+  let count = 0
+  const walk = (v: unknown): unknown => {
+    if (v === null || typeof v !== 'object') return v
+    if (Array.isArray(v)) {
+      let changed = false
+      const out = v.map((x) => {
+        const y = walk(x)
+        if (y !== x) changed = true
+        return y
+      })
+      return changed ? out : v
+    }
+    const o = v as Record<string, unknown>
+    let changed = false
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(o)) {
+      let y = walk(o[k])
+      if (k === 'properties' && y && typeof y === 'object' && Object.hasOwn(y, '$file')) {
+        const props = y as Record<string, unknown>
+        if (Object.hasOwn(props, '$asset')) {
+          throw new RewriteError('A schema has properties for both $file and $asset')
+        }
+        const next: Record<string, unknown> = {}
+        for (const pk of Object.keys(props)) {
+          if (pk !== '$file') {
+            next[pk] = props[pk]
+            continue
+          }
+          let prop = props[pk]
+          if (prop && typeof prop === 'object' && !Array.isArray(prop)) {
+            const pattern = (prop as Record<string, unknown>).pattern
+            if (typeof pattern === 'string' && pattern.startsWith('^sha256:')) {
+              prop = { ...prop, pattern: '^ul:asset:' + pattern.slice('^sha256:'.length) }
+            }
+          }
+          next.$asset = prop
+        }
+        y = next
+        count++
+      }
+      if (k === 'required' && Array.isArray(y) && y.includes('$file')) {
+        y = y.map((r) => (r === '$file' ? '$asset' : r))
+        count++
+      }
+      if (y !== o[k]) changed = true
+      out[k] = y
+    }
+    return changed ? out : v
+  }
+  const schema2 = walk(schema)
+  return { schema: schema2, count }
+}
+
+/** A `$schema` line with its `$file` properties converted, or null when it has none. */
+function convertSchemaLine(line: string): string | null {
+  if (!line.includes('"$file"')) return null
+  const o = JSON.parse(line) as { id: string; type: string; data: unknown }
+  const { schema, count } = convertSchemaRefs(o.data)
+  if (count === 0) return null
+  return (
+    '{"id":' +
+    JSON.stringify(o.id) +
+    ',"type":' +
+    JSON.stringify(o.type) +
+    ',"data":' +
+    jcs(schema) +
+    '}'
+  )
 }
 
 /** A record line with its references converted, or null when it holds none. */
@@ -320,6 +398,7 @@ export async function rewriteCollection(
   // Schemas as of each commit, to check every record whose data changes.
   const schemas = new Map<string, SchemaValidator | null>()
   let records = 0
+  const schemaPairs: RewritePlan['schemas'] = []
   const writes: { key: string; bytes: Uint8Array }[] = []
   let filesWritten = 0
   // A changed commit at or below the layout's `through`: its rows in the layout's files are
@@ -339,11 +418,23 @@ export async function rewriteCollection(
     const mine = rows.get(c.number) ?? []
     let changed = 0
     const converted: Row[] = []
+    let schemaRows = 0
     for (const r of mine) {
-      if (r.type === SCHEMA_TYPE) {
-        if (r.kind === 'x') schemas.set(r.id, null)
-        else if (r.line)
-          schemas.set(r.id, compileSchema((JSON.parse(r.line) as { data: unknown }).data))
+      if (r.type === SCHEMA_TYPE && r.kind === 'x') schemas.set(r.id, null)
+      if (r.type === SCHEMA_TYPE && r.kind === 'r' && r.line) {
+        const line = convertSchemaLine(r.line)
+        const body = (JSON.parse(line ?? r.line) as { data: unknown }).data
+        schemas.set(r.id, compileSchema(body))
+        if (line !== null) {
+          changed++
+          schemaRows++
+          const before = sha256Hex(jcs((JSON.parse(r.line) as { data: unknown }).data))
+          const after = sha256Hex(jcs(body))
+          if (!schemaPairs.some((p) => p.type === r.id && p.before === before))
+            schemaPairs.push({ type: r.id, before, after })
+          converted.push({ ...r, line, hash: null, size: utf8(line).byteLength })
+          continue
+        }
       }
       if (r.kind !== 'r' || r.line === null || r.type.startsWith('$')) {
         converted.push(r)
@@ -365,7 +456,7 @@ export async function rewriteCollection(
       }
       converted.push({ ...r, line, hash: null, size: utf8(line).byteLength })
     }
-    records += changed
+    records += changed - schemaRows
 
     // Files: written again where a row changed, or where a layout will list them.
     const needFiles = scan && (changed > 0 || c.number <= through)
@@ -442,6 +533,7 @@ export async function rewriteCollection(
     collection,
     commits: result,
     records,
+    schemas: schemaPairs,
     files: filesWritten,
     layout: needLayout && layout ? layout.number + 1 : null,
     createdAt: now().toISOString(),
