@@ -6,7 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { v3 } from '@underlay/protocol'
+import { mayHoldAssetRefs, v3 } from '@underlay/protocol'
 
 import { type AssetRow, assetsHere, assetRefsIn, listAssets } from '../core/assets.js'
 import {
@@ -187,7 +187,10 @@ export async function loadCollection(ctx: Ctx, meta: CollectionMeta): Promise<Co
         const dec = new TextDecoder()
         for await (const r of v3.exportAll(c.store.fs, view, { from: PAST_RESERVED })) {
           if (!r.line) continue
-          for (const f of assetRefsIn((JSON.parse(dec.decode(r.line)) as { data: unknown }).data))
+          const text = dec.decode(r.line)
+          // Most records attach nothing: parse only those whose text can.
+          if (!mayHoldAssetRefs(text)) continue
+          for (const f of assetRefsIn((JSON.parse(text) as { data: unknown }).data))
             if (!by.has(f.hash)) by.set(f.hash, `${r.type} ${r.id}`)
           if (by.size >= listed.length) break
         }

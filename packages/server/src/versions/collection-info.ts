@@ -26,7 +26,7 @@ import * as schema from '../db/schema.js'
 import { registerJob } from '../jobs.js'
 import { mirrorCollectionInfo } from '../locations/mirror.js'
 import type { Ports } from '../ports.js'
-import { syncDescription } from '../v3/authority.js'
+import { commitsOf } from '../v3/queue.js'
 
 /**
  * Keep `collection.json` current. With a signer (a commit about to sign an
@@ -100,7 +100,8 @@ registerJob('collection.info', async (job, ports) => {
   // A v3 collection's description says whether it is public and which keys sign it
   // (docs/protocol/v3.md, Section 12); v2's collection.json says more.
   if ((await ports.stores.layoutOf(collectionId)) === 'v3') {
-    await syncDescription(ports, collectionId)
+    // Where its commits land, so a landing's or a rewrite's write of it is never undone.
+    await commitsOf(ports).describe(ports, collectionId)
     return
   }
   const repo = await ports.stores.forCollection(collectionId)

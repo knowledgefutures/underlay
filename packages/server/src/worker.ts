@@ -33,6 +33,7 @@ import {
   serverNameOf,
 } from './ports.js'
 import { createStores, newCollectionsFrom } from './stores.js'
+import { syncDescription } from './v3/authority.js'
 import { landCommit, type Landing } from './v3/landing.js'
 import { type CommitsNamespace, durableQueue, serially } from './v3/queue.js'
 import { rewriteV3 } from './v3/rewrite.js'
@@ -404,6 +405,11 @@ export class CollectionCommits {
     } as unknown as ExecutionContext
     // Landing never goes back through the queue, so these ports' own `commits` is unused.
     const ports = makePorts(this.env, ctx)
+    if (new URL(req.url).pathname === '/describe') {
+      const r = (await req.json()) as { collectionId: string }
+      await this.#run(r.collectionId, () => syncDescription(ports, r.collectionId))
+      return new Response(null, { status: 204 })
+    }
     if (new URL(req.url).pathname === '/rewrite') {
       const r = (await req.json()) as { collectionId: string; dryRun?: boolean }
       const outcome = await this.#run(r.collectionId, () =>

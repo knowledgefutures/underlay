@@ -230,7 +230,7 @@ describe('asset names', () => {
     expect(r.open.limits).not.toHaveProperty('file_bytes')
     expect(r.res!.status).toBe(422)
     expect(r.body).toEqual({
-      error: 'Missing files',
+      error: 'Missing assets',
       assetsNeeded: [sha('never')],
       statusCode: 422,
     })
@@ -295,8 +295,8 @@ describe('asset names', () => {
       semver: 'v1.0.0',
       assetCount: 3,
     })
-    expect(withAssetNames({ error: 'Missing files', filesNeeded: ['a'] })).toEqual({
-      error: 'Missing files',
+    expect(withAssetNames({ error: 'Missing assets', filesNeeded: ['a'] })).toEqual({
+      error: 'Missing assets',
       assetsNeeded: ['a'],
     })
     // One stored with both keeps its asset name's value; anything else is as it was.

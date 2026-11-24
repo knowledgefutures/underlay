@@ -224,7 +224,7 @@ describe.skipIf(!onV3)('v3: what the security review fixed', () => {
     let up = await upload(h, user, other, files)
     expect(up).toMatchObject({
       status: 'open',
-      error: { error: 'Missing files', problems: [hash] },
+      error: { error: 'Missing assets', problems: [hash] },
     })
     expect((await h.request(`${other}/assets/${hash}`, { user })).status).toBe(404)
     // Once it has sent them, the same commit lands.

@@ -12,9 +12,10 @@
  * target exists or can be read: a link is a claim made by the record that holds it.
  *
  * An asset reference, `{"$asset": "ul:asset:<hex>"}` (asset-refs.ts, Section 5.3), attaches
- * the asset as well as pointing at it; `links` reads it, and the older
- * `{"$file": "sha256:<hex>"}`, as a link to `ul:asset:<hex>`. `checkLinks` refuses a malformed
- * `$asset` too. A `$file` is not checked: as in v2, one with any other value is no reference.
+ * the asset as well as pointing at it; `links` reads it as a link to `ul:asset:<hex>`.
+ * `checkLinks` refuses a malformed `$asset`, and any `$file` outside a link or an asset
+ * reference: drafts attached assets that way (Appendix D). v2 still reads its own `$file`
+ * (`legacyFiles`).
  */
 import { assetRefIn } from './asset-refs.js'
 import { isHex64, parseUlId, type UlKind } from './ids.js'

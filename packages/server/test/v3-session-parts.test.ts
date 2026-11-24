@@ -191,7 +191,7 @@ describe.skipIf(!onV3)('v3 session commits in parts', () => {
     await h.drain()
     let s = await status(h, user, base, sid)
     expect(s.status).toBe('open')
-    expect(s.error).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(never)] })
+    expect(s.error).toMatchObject({ error: 'Missing assets', assetsNeeded: [sha(never)] })
     // Uploaded now: the next commit is a new attempt, planned afresh.
     expect(
       (await h.request(`${base}/assets/${sha(never)}`, { method: 'PUT', user, body: never }))

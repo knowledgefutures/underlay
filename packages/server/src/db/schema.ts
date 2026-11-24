@@ -764,6 +764,8 @@ export const v3Uploads = sqliteTable(
       statusCode: number
       error: string
       problems?: string[]
+      /** Assets a commit names whose bytes were never sent (bare hex). */
+      assetsNeeded?: string[]
       /** An author-built commit that lost: the authority's newest, to replay on. */
       latest?: { number: number; id: string; semver: string } | null
     }>('error'),

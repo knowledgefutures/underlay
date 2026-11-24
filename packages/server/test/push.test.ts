@@ -475,7 +475,7 @@ describe('delta push', () => {
       user,
     })
     expect(res.status).toBe(422)
-    expect(await json(res)).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(missing)] })
+    expect(await json(res)).toMatchObject({ error: 'Missing assets', assetsNeeded: [sha(missing)] })
 
     opened = await open([sha(uploaded)])
     expect(opened.needed_assets).toEqual([])
@@ -583,6 +583,22 @@ describe('push sessions settle once', () => {
     expect((await settled(h, c.id, sid)).versions).toHaveLength(0)
   })
 
+  it('takes ul:asset: ids in assets.add, and refuses what is no asset id', async () => {
+    const { h, user, base } = await setup()
+    const open = (add: unknown[]) =>
+      h.request(`${base}/push`, {
+        method: 'POST',
+        user,
+        json: { schemas: { Author }, assets: { add } },
+      })
+    const hash = sha('named by its id')
+    const opened = await json(await open([`ul:asset:${hash}`]))
+    expect(opened.needed_assets).toEqual([hash])
+    const bad = await open([`sha256:${hash}`])
+    expect(bad.status).toBe(400)
+    expect((await json(bad)).error).toMatch(/write ul:asset:<hex>/)
+  })
+
   for (const mode of ['sync', 'async'] as const) {
     it(`keeps a session refused for missing files open, to commit again (${mode})`, async () => {
       const { h, user, base, c } = await setup()
@@ -611,13 +627,13 @@ describe('push sessions settle once', () => {
       const refused = await commit()
       if (refused) {
         expect(refused.status).toBe(422)
-        expect(await json(refused)).toMatchObject({ error: 'Missing files' })
+        expect(await json(refused)).toMatchObject({ error: 'Missing assets' })
       }
       // Open, with the error saying what to upload.
       const s = await status()
       expect(s).toMatchObject({
         status: 'open',
-        error: { error: 'Missing files', assetsNeeded: [sha(content)], statusCode: 422 },
+        error: { error: 'Missing assets', assetsNeeded: [sha(content)], statusCode: 422 },
         result: null,
         finalize_started_at: null,
       })

@@ -782,7 +782,9 @@ registerJob('v3.uploadPrepare', async (job, ports) => {
   if (missing.length > 0) {
     await reopen(ports, upload.id, {
       statusCode: 422,
-      error: 'Missing files',
+      error: 'Missing assets',
+      // As a push's commit answers (push/outcome.ts); `problems` for clients that read it.
+      assetsNeeded: missing.slice(0, 100),
       problems: missing.slice(0, 100),
     })
     return

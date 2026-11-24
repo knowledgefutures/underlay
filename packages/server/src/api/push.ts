@@ -399,14 +399,27 @@ export function pushRoutes() {
     // "files" was this field's first name: refused, so a client sending it doesn't lose them.
     if (body.files !== undefined) return jsonError(c, 400, 'Name the assets "assets", not "files"')
     const files = (body.assets ?? {}) as { add?: unknown; remove?: unknown }
-    const hexList = (v: unknown) =>
-      Array.isArray(v)
-        ? v.filter((h): h is string => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h))
-        : []
+    // Bare hex or a `ul:asset:` id, as everywhere else an asset hash is taken; anything else
+    // is refused, not dropped, so a client never waits on assets it was never asked for.
+    const hexList = (v: unknown, what: string): string[] | string => {
+      if (v === undefined) return []
+      if (!Array.isArray(v)) return `"assets.${what}" must be an array of asset ids`
+      const out: string[] = []
+      for (const h of v) {
+        const m = typeof h === 'string' ? /^(?:ul:asset:)?([0-9a-f]{64})$/.exec(h) : null
+        if (!m) return `"assets.${what}" holds ${JSON.stringify(h)}: write ul:asset:<hex>`
+        out.push(m[1]!)
+      }
+      return out
+    }
+    const add = hexList(files.add, 'add')
+    const remove = hexList(files.remove, 'remove')
+    if (typeof add === 'string') return jsonError(c, 400, add)
+    if (typeof remove === 'string') return jsonError(c, 400, remove)
     const inputs: SessionInputs = {
       schemas: schemas as SessionInputs['schemas'],
       metadata,
-      files: { add: hexList(files.add), remove: hexList(files.remove) },
+      files: { add, remove },
     }
     const session = await createSession(
       ports,

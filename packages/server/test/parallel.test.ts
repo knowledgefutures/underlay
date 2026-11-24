@@ -557,7 +557,7 @@ describeNotOnV3("v2's trees, roots, logs, or packs: v3 has none")('parallel comm
     let status = await commit()
     expect(status).toMatchObject({
       status: 'open',
-      error: { error: 'Missing files', assetsNeeded: [sha('portrait')] },
+      error: { error: 'Missing assets', assetsNeeded: [sha('portrait')] },
     })
     const [s] = await h.ports.db
       .select()

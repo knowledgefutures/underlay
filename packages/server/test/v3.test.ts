@@ -388,7 +388,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       [{ id: 'x', type: 'Book', data: { title: 'X', cover: attach(sha(cover)) } }],
     )
     expect(res.status).toBe(422)
-    expect(await json(res)).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(never)] })
+    expect(await json(res)).toMatchObject({ error: 'Missing assets', assetsNeeded: [sha(never)] })
 
     res = await push(h, user, base, { schemas: { Book }, assets: { add: [sha(loose)] } }, [
       { id: 'x', type: 'Book', data: { title: 'X', cover: attach(sha(cover)) } },
@@ -432,7 +432,7 @@ describe.skipIf(!onV3)('v3 collections', () => {
       book({ $asset: `ul:asset:${sha(never)}` }),
     )
     expect(res.status).toBe(422)
-    expect(await json(res)).toMatchObject({ error: 'Missing files', assetsNeeded: [sha(never)] })
+    expect(await json(res)).toMatchObject({ error: 'Missing assets', assetsNeeded: [sha(never)] })
     // A pasted hash is refused, not stored as data that looks like a reference.
     res = await push(h, user, base, { schemas: { Book } }, book({ $asset: `sha256:${sha(cover)}` }))
     expect(res.status).toBe(422)

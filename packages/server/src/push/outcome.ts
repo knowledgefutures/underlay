@@ -14,7 +14,7 @@ import type { CommitResult } from '../versions/commit.js'
 import { SESSION_TTL_MS, transition } from './session.js'
 
 /** The one refusal a client can fix within the session: the session reopens (settleSession). */
-export const MISSING_FILES = 'Missing files'
+export const MISSING_ASSETS = 'Missing assets'
 
 export interface Outcome {
   /**
@@ -60,7 +60,7 @@ export async function commitOutcome(
     return {
       status: 422,
       body: {
-        error: MISSING_FILES,
+        error: MISSING_ASSETS,
         assetsNeeded: err.hashes.slice(0, 100),
         statusCode: 422,
       },
@@ -147,7 +147,7 @@ async function semverOf(ports: Ports, versionId: string | null): Promise<string 
 
 /**
  * Record an outcome on the session: committing → committed | failed, or back to
- * open after a "Missing files" refusal, so the client can upload them and commit
+ * open after a "Missing assets" refusal, so the client can upload them and commit
  * the same session again (the error stays on the session for a polling client).
  * Only a committing session moves, so a settled one is never overwritten; false
  * if this call didn't move it (another run settled it first).
@@ -158,7 +158,7 @@ export async function settleSession(
   outcome: Outcome,
 ): Promise<boolean> {
   if (outcome.status === 202) return true
-  if (outcome.status === 422 && outcome.body.error === MISSING_FILES) {
+  if (outcome.status === 422 && outcome.body.error === MISSING_ASSETS) {
     // A parallel plan is dropped: the next commit plans again, over any records
     // uploaded meanwhile. The old plan's jobs stop at the plan id check.
     return transition(ports, sessionId, 'committing', 'open', {

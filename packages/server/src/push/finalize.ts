@@ -2,7 +2,7 @@
  * Finishing a push session: run the commit and record the outcome on the
  * session, whether it runs inside the request or as a job. The session moves
  * open → committing (by the caller) → committed | failed, or back to open after
- * a "Missing files" refusal; `result` holds what a synchronous commit returns,
+ * a "Missing assets" refusal; `result` holds what a synchronous commit returns,
  * `error` the rejection. A large delta commit may instead plan a parallel commit
  * (parallel.ts), whose assembly job settles the session later. A commit that
  * runs twice settles once: the second finds its own version (outcome.ts).
@@ -33,7 +33,7 @@ export async function finalizeSession(ports: Ports, sessionId: string): Promise<
   const session = await getSession(ports, sessionId)
   if (!session) return { status: 400, body: { error: 'Session not found', statusCode: 400 } }
   // Only a committing session commits: a job delivered again after the session
-  // settled, or reopened after "Missing files", reports what's recorded.
+  // settled, or reopened after "Missing assets", reports what's recorded.
   if (session.status !== 'committing') return recorded(session)
   const trace = commitTrace(ports, sessionId)
   // A parallel commit already planned: make sure its jobs are queued, and wait.
