@@ -3,10 +3,20 @@ import { Link } from 'react-router'
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 import { protocolEyebrow } from '~/lib/protocol'
 
-const layoutFile = `{"underlay": 3, "collection": collection id, "number": n, "through": commit number,
- "createdAt": ISO 8601 UTC,
- "files": [{"id", "labeled", "first", "last", "commits": [lowest, highest],
-            "entries", "records", "removals", "bytes"}, …]}`
+const layoutFile = `{
+  "underlay": 3,
+  "collection": collection id,
+  "number": n,
+  "through": commit number,
+  "createdAt": ISO 8601 UTC,
+  "files": [
+    {
+      "id", "labeled", "first", "last", "commits": [lowest, highest],
+      "entries", "records", "removals", "bytes"
+    },
+    …
+  ]
+}`
 
 const storage = `uploads/<session>/<file id>            an upload's files, until its commit checks and installs them
 records/<file id>                      sorted-record-files, shared by the collections naming them

@@ -2,12 +2,27 @@ import { Link } from 'react-router'
 
 import DocsLayout, { CodeBlock } from '~/components/DocsLayout'
 
-const linkExample = `{"id": "w1", "type": "Work", "data": {
-  "title": "Notes on a dataset",
-  "derivedFrom": {"$link": "ul:rec:9f2c...", "collection": "4f7d1c2e-...", "type": "work", "id": "10.1234/abc"},
-  "figure": {"$link": "ul:asset:7b1e...", "collection": "4f7d1c2e-..."},
-  "usedVersion": {"$link": "ul:ver:41d0...", "collection": "4f7d1c2e-..."}
-}}`
+const linkExample = `{
+  "id": "w1",
+  "type": "Work",
+  "data": {
+    "title": "Notes on a dataset",
+    "derivedFrom": {
+      "$link": "ul:rec:9f2c…",
+      "collection": "4f7d1c2e-…",
+      "type": "work",
+      "id": "10.1234/abc"
+    },
+    "figure": {
+      "$link": "ul:asset:7b1e…",
+      "collection": "4f7d1c2e-…"
+    },
+    "usedVersion": {
+      "$link": "ul:ver:41d0…",
+      "collection": "4f7d1c2e-…"
+    }
+  }
+}`
 
 /** Each kind of link: what it points at, its `$link`, where its hash comes from. */
 const linkKinds: [string, string, string][] = [

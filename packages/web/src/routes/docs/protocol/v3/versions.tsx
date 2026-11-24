@@ -8,36 +8,55 @@ const fileShape = `[record block]… [key block]… [footer] [trailer]
 entry, in a file from an upload:  [kind, type, id, hash, size, block, offset]
 entry, in a rebuilt file:         [kind, type, id, hash, size, block, offset, commit]`
 
-const footer = `{"content": {
-   "underlay": 3,
-   "labeled": boolean,
-   "entries": n, "lines": n, "records": n, "removals": n, "withheld": n,
-   "bytes": total uncompressed size of the record blocks,
-   "first": [type, id] | null, "last": [type, id] | null,
-   "commits": [lowest, highest] | null,
-   "keyBlocks": [[type, id, hash, entries], …]
- },
- "locator": {
-   "recordBlocks": [compressed length, …],
-   "keyBlocks": [compressed length, …]
- }}
+const footer = `{
+  "content": {
+    "underlay": 3,
+    "labeled": boolean,
+    "entries": n,
+    "lines": n,
+    "records": n,
+    "removals": n,
+    "withheld": n,
+    "bytes": n,                  uncompressed size of the record blocks
+    "first": [type, id] | null,
+    "last": [type, id] | null,
+    "commits": [lowest, highest] | null,
+    "keyBlocks": [[type, id, hash, entries], …]
+  },
+  "locator": {
+    "recordBlocks": [compressed length, …],
+    "keyBlocks": [compressed length, …]
+  }
+}
 
 file id = SHA-256(JCS(content)), lowercase hex
 trailer = 55 4C 33 53 52 46 0A 00 ("UL3SRF\\n\\0"), then the footer's compressed
           length as an unsigned 64-bit big-endian integer: 16 bytes`
 
-const commit = `{"underlay": 3,
- "collection": collection id,
- "number": n,                       1 for the first commit
- "previous": hex | null,            the SHA-256 of commit n − 1
- "semver": "v1.0.0",
- "createdAt": ISO 8601 UTC,
- "changes": [{"collection": collection id,
-              "files": [{"id", "first", "last", "entries", "records", "removals", "bytes"}, …],
-              "base": hex | null,
-              "message": string | null,
-              "keyId": string | null, "sig": string | null}, …],
- "keyId": string | null, "sig": string | null}
+const commit = `{
+  "underlay": 3,
+  "collection": collection id,
+  "number": n,                   1 for the first commit
+  "previous": hex | null,        the SHA-256 of commit n − 1
+  "semver": "v1.0.0",
+  "createdAt": ISO 8601 UTC,
+  "changes": [
+    {
+      "collection": collection id,
+      "files": [
+        {"id", "first", "last", "entries", "records", "removals", "bytes"},
+        …
+      ],
+      "base": hex | null,
+      "message": string | null,
+      "keyId": string | null,
+      "sig": string | null
+    },
+    …
+  ],
+  "keyId": string | null,
+  "sig": string | null
+}
 
 version id = "ul:ver:" + SHA-256(JCS(commit)), lowercase hex
 previous, base = that SHA-256 alone (bare hex)`

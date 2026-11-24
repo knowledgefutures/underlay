@@ -21,11 +21,23 @@ ul:ver:<hex>      a version: the SHA-256 of its commit
 
 <hex> = 64 lowercase hex characters`
 
-const link = `{"title": "Notes on a dataset",
- "derivedFrom": {"$link": "ul:rec:9f2c…", "collection": "4f7d1c2e-…",
-                 "type": "work", "id": "10.1234/abc"},
- "figure":      {"$link": "ul:asset:7b1e…", "collection": "4f7d1c2e-…"},
- "usedVersion": {"$link": "ul:ver:41d0…", "collection": "4f7d1c2e-…"}}`
+const link = `{
+  "title": "Notes on a dataset",
+  "derivedFrom": {
+    "$link": "ul:rec:9f2c…",
+    "collection": "4f7d1c2e-…",
+    "type": "work",
+    "id": "10.1234/abc"
+  },
+  "figure": {
+    "$link": "ul:asset:7b1e…",
+    "collection": "4f7d1c2e-…"
+  },
+  "usedVersion": {
+    "$link": "ul:ver:41d0…",
+    "collection": "4f7d1c2e-…"
+  }
+}`
 
 /** What a link can point at: target, `$link`, what the hex is, the members that place it. */
 const linkTargets: [string, string, string, string][] = [
@@ -59,9 +71,14 @@ const linkRefused: [string, string][] = [
   ['42, {}, null', 'a string'],
 ]
 
-const assetRef = `{"title": "Notes on a dataset",
- "cover": {"$asset": "ul:asset:7b1e…", "mediaType": "image/png",
-           "fileName": "cover.png"}}`
+const assetRef = `{
+  "title": "Notes on a dataset",
+  "cover": {
+    "$asset": "ul:asset:7b1e…",
+    "mediaType": "image/png",
+    "fileName": "cover.png"
+  }
+}`
 
 /** An asset reference's members. */
 const assetRefMembers: [string, string, string][] = [
