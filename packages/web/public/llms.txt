@@ -602,7 +602,8 @@ These answer on www.underlay.org, but do not work yet:
   {"$asset": "ul:asset:<hex>", "mediaType": "<type/subtype>", "fileName": "<name>"}; point at
   an exact record, asset, or version anywhere on Underlay with a link (next section).
 - On an asset reference, give "mediaType" (what the bytes are, an IANA media type such as
-  "application/pdf") and "fileName" (what they're saved as, no / or \). The collection serves
+  "application/pdf") and "fileName" (what they're saved as: no /, \, or control characters,
+  not . or .., at most 255 characters). The collection serves
   the asset as the mediaType its records declare, over the Content-Type it was uploaded with,
   and the type is that collection's alone: another collection holding the same bytes declares
   its own. A malformed mediaType or fileName is ignored, not refused. Any other member of the

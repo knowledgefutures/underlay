@@ -222,13 +222,14 @@ export default function DocsApiAssets() {
           The presigned URL lasts 300 seconds and downloads the asset as an attachment, with the
           collection&rsquo;s <code>mediaType</code> for it. It&rsquo;s saved under its hash, or
           under <code>?fileName=</code> when you give one, such as an asset reference&rsquo;s{' '}
-          <code>fileName</code> (no <code>/</code> or <code>\</code>, at most 255 characters;
-          anything else is ignored). The redirect carries{' '}
-          <code>Cache-Control: private, max-age=240</code>, so a browser may reuse it until shortly
-          before the URL expires. This API path is the durable locator for the asset; the redirect
-          target is <strong>ephemeral and must not be persisted or shared</strong>, so always
-          re-fetch through the API path. To resolve many assets in one request, see the presign
-          endpoint below. Downloading an asset by its hash alone, outside a collection (
+          <code>fileName</code> (no <code>/</code>, <code>\</code>, or control characters, not{' '}
+          <code>.</code> or <code>..</code>, at most 255 characters; anything else is ignored). The
+          redirect carries <code>Cache-Control: private, max-age=240</code>, so a browser may reuse
+          it until shortly before the URL expires. This API path is the durable locator for the
+          asset; the redirect target is{' '}
+          <strong>ephemeral and must not be persisted or shared</strong>, so always re-fetch through
+          the API path. To resolve many assets in one request, see the presign endpoint below.
+          Downloading an asset by its hash alone, outside a collection (
           <code>GET /api/collections/assets/:hash</code>), is not available yet.
         </p>
         <h3>Example</h3>

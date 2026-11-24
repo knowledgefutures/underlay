@@ -91,7 +91,7 @@ const assetRefMembers: [string, string, string][] = [
   [
     'fileName',
     'Recommended',
-    'What to call the bytes when they’re saved: a file name, with no / or \\, at most 255 characters',
+    'What to call the bytes when they’re saved: a file name, with no /, \\, or control characters, not . or .., at most 255 characters',
   ],
   ['Any other', 'Optional', 'The publisher’s, such as where the bytes came from'],
 ]
