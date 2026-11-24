@@ -127,17 +127,17 @@ A client MUST check these rules on every line it sends, and a server MUST check 
 it receives. They are checked on the text, since a parsed value no longer shows some of them. A
 line is refused, with the code shown, if:
 
-| Rule            | A line is refused if                                                                                                                                                                  | Code               |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| Syntax          | it is not JSON (RFC 8259), including an unterminated string or a `\u` escape without exactly four hex digits                                                                          | `syntax`           |
-| Duplicate names | an object has two members whose names are equal once unescaped                                                                                                                       | `duplicate_key`    |
+| Rule            | A line is refused if                                                                                                                                                                | Code               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| Syntax          | it is not JSON (RFC 8259), including an unterminated string or a `\u` escape without exactly four hex digits                                                                        | `syntax`           |
+| Duplicate names | an object has two members whose names are equal once unescaped                                                                                                                      | `duplicate_key`    |
 | Unsafe integers | it has an integer literal (no fraction, no exponent) whose magnitude is over 2⁵³ − 1 (`9007199254740991`). A literal with a fraction or exponent is accepted, as its binary64 value | `unsafe_integer`   |
-| Lone surrogates | a string or name holds a UTF-16 surrogate, literal or `\u`-escaped, that is not half of a pair                                                                                        | `lone_surrogate`   |
-| Depth           | it nests more than 65 levels: each object or array is a level, and the line itself is level 1, so `data` may nest 64                                                                  | `too_deep`         |
-| Envelope        | it is not an object; or it is not exactly a record or a removal as above                                                                                                              | `bad_envelope`     |
-| Type            | `type` breaks Section 3.4                                                                                                                                                            | `bad_type`         |
-| Id              | `id` breaks Section 3.4                                                                                                                                                              | `bad_id`           |
-| Size            | the record line (3.2) is longer than 8,388,608 bytes                                                                                                                                  | `record_too_large` |
+| Lone surrogates | a string or name holds a UTF-16 surrogate, literal or `\u`-escaped, that is not half of a pair                                                                                      | `lone_surrogate`   |
+| Depth           | it nests more than 65 levels: each object or array is a level, and the line itself is level 1, so `data` may nest 64                                                                | `too_deep`         |
+| Envelope        | it is not an object; or it is not exactly a record or a removal as above                                                                                                            | `bad_envelope`     |
+| Type            | `type` breaks Section 3.4                                                                                                                                                           | `bad_type`         |
+| Id              | `id` breaks Section 3.4                                                                                                                                                             | `bad_id`           |
+| Size            | the record line (3.2) is longer than 8,388,608 bytes                                                                                                                                | `record_too_large` |
 
 A line that breaks more than one rule is reported with the first code in this order:
 
@@ -176,11 +176,11 @@ An **id** is a string of 1 to 1,024 UTF-8 bytes.
 A **type** is a string of 1 to 128 UTF-8 bytes that does not begin with `.` and holds no `/`,
 `\`, U+0000 to U+001F, or U+007F. Types beginning with `$` are reserved:
 
-| Type      | Id                                     | Data                                                                    |
-| --------- | -------------------------------------- | ----------------------------------------------------------------------- |
-| `$schema` | a publisher's type                     | that type's schema (Section 4)                                          |
-| `$asset`  | an asset's SHA-256, 64 lowercase hex   | `{"size": count, "mediaType": string or null}` (Section 5.3)            |
-| `$meta`   | `collection`                           | an object: the collection's metadata (a name, a readme; the publisher's) |
+| Type      | Id                                   | Data                                                                     |
+| --------- | ------------------------------------ | ------------------------------------------------------------------------ |
+| `$schema` | a publisher's type                   | that type's schema (Section 4)                                           |
+| `$asset`  | an asset's SHA-256, 64 lowercase hex | `{"size": count, "mediaType": string or null}` (Section 5.3)             |
+| `$meta`   | `collection`                         | an object: the collection's metadata (a name, a readme; the publisher's) |
 
 No other `$` type is valid. A **publisher's type** (any other) MUST NOT begin with a character
 that sorts before `$` (U+0020 to U+0023), so that every reserved row sorts before every record,
@@ -714,22 +714,22 @@ valid under `lineage`. The fork point is at or after the copied layout's `throug
 
 ## 13. Limits and constants
 
-| Name                 | Value                                       | Section |
-| -------------------- | ------------------------------------------- | ------- |
-| Protocol version     | 3                                           | all     |
-| Largest safe integer | 9,007,199,254,740,991                       | 3.1     |
-| Depth of `data`      | 64                                          | 3.1     |
-| Record line          | 8,388,608 bytes (8 MiB)                     | 3.1     |
-| Id                   | 1 to 1,024 bytes                            | 3.4     |
-| Type                 | 1 to 128 bytes                              | 3.4     |
-| Schema               | 262,144 bytes (256 KiB)                     | 4.1     |
-| Pattern              | 256 UTF-16 code units                       | 4.1     |
-| Record block         | 262,144 bytes                               | 6.1     |
-| Key block            | 1,024 entries                               | 6.3     |
-| Entries in a file    | 1,048,576                                   | 6.2     |
-| Trailer              | `UL3SRF\n\0`, then a u64 big-endian; 16 bytes | 6.5   |
-| Underlay id kinds    | `rec`, `asset`, `ver`                       | 5.1     |
-| Collection id        | 1 to 128 characters                         | 12      |
+| Name                 | Value                                         | Section |
+| -------------------- | --------------------------------------------- | ------- |
+| Protocol version     | 3                                             | all     |
+| Largest safe integer | 9,007,199,254,740,991                         | 3.1     |
+| Depth of `data`      | 64                                            | 3.1     |
+| Record line          | 8,388,608 bytes (8 MiB)                       | 3.1     |
+| Id                   | 1 to 1,024 bytes                              | 3.4     |
+| Type                 | 1 to 128 bytes                                | 3.4     |
+| Schema               | 262,144 bytes (256 KiB)                       | 4.1     |
+| Pattern              | 256 UTF-16 code units                         | 4.1     |
+| Record block         | 262,144 bytes                                 | 6.1     |
+| Key block            | 1,024 entries                                 | 6.3     |
+| Entries in a file    | 1,048,576                                     | 6.2     |
+| Trailer              | `UL3SRF\n\0`, then a u64 big-endian; 16 bytes | 6.5     |
+| Underlay id kinds    | `rec`, `asset`, `ver`                         | 5.1     |
+| Collection id        | 1 to 128 characters                           | 12      |
 
 The reference implementation defines these in `packages/protocol/src/constants.ts` and
 `packages/protocol/src/v3/constants.ts`, and the test vectors repeat them.
